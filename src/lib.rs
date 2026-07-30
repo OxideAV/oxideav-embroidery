@@ -10,6 +10,35 @@
 //! ([`Design`]) and encodes the model back to the machine formats.
 //! All format truth comes from the workspace's staged clean-room
 //! documentation under `docs/embroidery/`.
+//!
+//! # Example
+//!
+//! ```
+//! use oxideav_embroidery::{dst, Command, Design, Format};
+//!
+//! // Three stitches, a colour change, one more stitch.
+//! let design = Design {
+//!     commands: vec![
+//!         Command::Stitch { dx: 10, dy: 0 },
+//!         Command::Stitch { dx: 0, dy: 10 },
+//!         Command::Stitch { dx: -10, dy: 0 },
+//!         Command::ColorChange { dx: 0, dy: 0, index: None },
+//!         Command::Stitch { dx: 0, dy: -10 },
+//!         Command::End,
+//!     ],
+//!     ..Default::default()
+//! };
+//!
+//! // Encode as Tajima DST …
+//! let bytes = dst::encode(&design, &dst::DstEncodeOptions::default())?;
+//!
+//! // … and decode any supported format back to the same model.
+//! let (format, decoded) = oxideav_embroidery::decode(&bytes)?;
+//! assert_eq!(format, Format::Dst);
+//! assert_eq!(decoded.counts().stitches, 4);
+//! assert_eq!(decoded.counts().color_changes, 1);
+//! # Ok::<(), oxideav_embroidery::Error>(())
+//! ```
 
 pub mod dst;
 pub mod exp;
