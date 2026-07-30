@@ -11,6 +11,7 @@
 //! All format truth comes from the workspace's staged clean-room
 //! documentation under `docs/embroidery/`.
 
+pub mod dst;
 pub mod model;
 
 pub use model::{Command, Counts, Design, Extents, Thread};
