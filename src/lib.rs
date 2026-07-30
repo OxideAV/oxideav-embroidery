@@ -14,6 +14,7 @@
 pub mod dst;
 pub mod model;
 pub mod pec;
+pub mod pes;
 
 pub use model::{Command, Counts, Design, Extents, Thread};
 
