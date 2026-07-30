@@ -137,6 +137,14 @@ pub fn decode_inf(data: &[u8]) -> Result<Vec<Thread>> {
             context: "INF record area",
         });
     }
+    // Every record is at least 10 bytes, so the declared colour
+    // count is bounded by the record area — reject inconsistent
+    // headers instead of pre-allocating from an untrusted count.
+    if count > record_area / 10 {
+        return Err(Error::invalid(format!(
+            "INF colour count {count} impossible for a {record_area}-byte record area"
+        )));
+    }
     let mut threads = Vec::with_capacity(count);
     let mut o = 16usize;
     for _ in 0..count {
@@ -282,6 +290,19 @@ mod tests {
         };
         let bytes = encode(&d).unwrap();
         assert_eq!(bytes, vec![0x80, 0x02, 3, 4]);
+    }
+
+    #[test]
+    fn inf_impossible_color_count_rejected() {
+        // A declared count far larger than the record area could hold
+        // must fail cleanly (no allocation from the untrusted count).
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&1u32.to_be_bytes());
+        bytes.extend_from_slice(&8u32.to_be_bytes());
+        bytes.extend_from_slice(&4u32.to_be_bytes()); // record area: 4 bytes
+        bytes.extend_from_slice(&0xFFFF_FFFFu32.to_be_bytes()); // count
+        bytes.extend_from_slice(&[0u8; 4]);
+        assert!(matches!(decode_inf(&bytes), Err(Error::Invalid { .. })));
     }
 
     #[test]
