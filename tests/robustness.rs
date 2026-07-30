@@ -5,7 +5,7 @@
 //! byte-flipped mutations of valid encodes, and truncations at every
 //! interesting boundary.
 
-use oxideav_embroidery::{dst, exp, hus, jef, pec, pes, phc, phx, Command, Design};
+use oxideav_embroidery::{dst, exp, hus, jef, pec, pes, phc, phx, vp3, Command, Design};
 
 struct Lcg(u32);
 
@@ -29,6 +29,7 @@ fn try_all_decoders(data: &[u8]) {
     let _ = exp::decode_inf(data);
     let _ = jef::decode(data);
     let _ = hus::parse(data);
+    let _ = vp3::parse(data);
 }
 
 fn valid_design() -> Design {

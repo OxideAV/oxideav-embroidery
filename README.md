@@ -30,6 +30,7 @@ counts / absolute-position helpers.
 | Melco EXP | ✅ | ✅ | Headerless stitch list + `.inf` colour companion (decode + encode) |
 | Janome JEF | ✅ | ✅ | Validated header, colour table, `80 01/02/10` escapes |
 | Husqvarna HUS | ◐ | — | Header, extents, palette and the three raw compressed streams; stitch decompression undocumented |
+| Husqvarna/Pfaff VP3 | ◐ | — | Signature probe + producer-string skim; stitch section undocumented |
 
 `probe()` identifies every signature-bearing format; `decode()`
 dispatches to the right module and returns the `Design`.

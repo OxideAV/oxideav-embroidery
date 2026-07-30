@@ -49,6 +49,7 @@ pub mod pec;
 pub mod pes;
 pub mod phc;
 pub mod phx;
+pub mod vp3;
 
 pub use model::{Command, Counts, Design, Extents, Thread};
 
@@ -70,6 +71,8 @@ pub enum Format {
     Jef,
     /// Husqvarna Viking HUS (header/metadata only).
     Hus,
+    /// Husqvarna Viking / Pfaff VP3 (signature/metadata only).
+    Vp3,
 }
 
 /// Identifies the format of `data` from its signature.
@@ -88,6 +91,8 @@ pub fn probe(data: &[u8]) -> Option<Format> {
         Some(Format::Phx)
     } else if hus::probe(data) {
         Some(Format::Hus)
+    } else if vp3::probe(data) {
+        Some(Format::Vp3)
     } else if dst::probe(data) {
         Some(Format::Dst)
     } else if jef::probe(data) {
@@ -114,6 +119,11 @@ pub fn decode(data: &[u8]) -> Result<(Format, Design)> {
         Format::Hus => {
             return Err(Error::Unsupported {
                 what: "HUS stitch streams use a compression scheme the staged documentation does not cover",
+            });
+        }
+        Format::Vp3 => {
+            return Err(Error::Unsupported {
+                what: "VP3 stitch section is not covered by the staged documentation",
             });
         }
     };
