@@ -12,6 +12,8 @@
 //! documentation under `docs/embroidery/`.
 
 pub mod dst;
+pub mod exp;
+pub mod jef;
 pub mod model;
 pub mod pec;
 pub mod pes;
