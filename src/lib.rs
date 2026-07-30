@@ -13,13 +13,83 @@
 
 pub mod dst;
 pub mod exp;
+pub mod hus;
 pub mod jef;
 pub mod model;
 pub mod pec;
 pub mod pes;
 pub mod phc;
+pub mod phx;
 
 pub use model::{Command, Counts, Design, Extents, Thread};
+
+/// The file formats this crate recognises.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Format {
+    /// Tajima DST.
+    Dst,
+    /// Brother PES (design container with embedded PEC).
+    Pes,
+    /// Standalone Brother PEC.
+    Pec,
+    /// Brother PHC (machine-side design).
+    Phc,
+    /// Brother PHX (current-generation machine-side design).
+    Phx,
+    /// Janome JEF.
+    Jef,
+    /// Husqvarna Viking HUS (header/metadata only).
+    Hus,
+}
+
+/// Identifies the format of `data` from its signature.
+///
+/// Melco EXP is headerless and cannot be probed, so it never
+/// appears here — use [`exp::decode`] directly when the extension
+/// says `.exp`.
+pub fn probe(data: &[u8]) -> Option<Format> {
+    if pes::probe(data) {
+        Some(Format::Pes)
+    } else if pec::probe(data) {
+        Some(Format::Pec)
+    } else if phc::probe(data) {
+        Some(Format::Phc)
+    } else if phx::probe(data) {
+        Some(Format::Phx)
+    } else if hus::probe(data) {
+        Some(Format::Hus)
+    } else if dst::probe(data) {
+        Some(Format::Dst)
+    } else if jef::probe(data) {
+        Some(Format::Jef)
+    } else {
+        None
+    }
+}
+
+/// Probes `data` and decodes it to a [`Design`] with the detected
+/// format. HUS is recognised but returns [`Error::Unsupported`]
+/// (its stitch compression is undocumented).
+pub fn decode(data: &[u8]) -> Result<(Format, Design)> {
+    let format = probe(data).ok_or(Error::BadMagic {
+        expected: "known embroidery",
+    })?;
+    let design = match format {
+        Format::Dst => dst::decode(data)?.design,
+        Format::Pes => pes::decode(data)?.pec.design,
+        Format::Pec => pec::decode(data)?.design,
+        Format::Phc => phc::decode(data)?.design,
+        Format::Phx => phx::decode(data)?.design,
+        Format::Jef => jef::decode(data)?.design,
+        Format::Hus => {
+            return Err(Error::Unsupported {
+                what: "HUS stitch streams use a compression scheme the staged documentation does not cover",
+            });
+        }
+    };
+    Ok((format, design))
+}
 
 /// Crate-level error type.
 #[derive(Debug)]
