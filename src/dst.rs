@@ -602,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn wilcom_stray_byte_tolerated() {
+    fn digitiser_variant_stray_byte_tolerated() {
         let d = sample_design();
         let mut bytes = encode(&d, &DstEncodeOptions::default()).unwrap();
         bytes.push(0x00); // (size − 512) % 3 == 1 variant
