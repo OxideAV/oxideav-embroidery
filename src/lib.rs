@@ -13,6 +13,7 @@
 
 pub mod dst;
 pub mod model;
+pub mod pec;
 
 pub use model::{Command, Counts, Design, Extents, Thread};
 
