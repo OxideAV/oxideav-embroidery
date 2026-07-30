@@ -1,0 +1,16 @@
+[package]
+name = "oxideav-embroidery"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+authors = ["Mark Karpeles"]
+description = "Pure-Rust machine-embroidery design formats — Tajima DST and Brother PES/PEC/PHC/PHX, decode + encode"
+repository = "https://github.com/OxideAV/oxideav-embroidery"
+homepage = "https://github.com/OxideAV/oxideav-embroidery"
+readme = "README.md"
+keywords = ["embroidery", "dst", "pes", "tajima", "brother"]
+categories = ["multimedia::encoding", "parser-implementations"]
+
+[dependencies]
+oxideav-core = "0.1"
