@@ -231,6 +231,18 @@ pub fn encode(design: &Design, options: &JefEncodeOptions) -> Result<Vec<u8>> {
             blocks
         )));
     }
+    // Implementation cap (±10 m) bounding the record-splitting loop;
+    // JEF's own extents fields are s32 and impose no practical limit.
+    let pre = design.extents();
+    if pre.min_x < -1_000_000
+        || pre.max_x > 1_000_000
+        || pre.min_y < -1_000_000
+        || pre.max_y > 1_000_000
+    {
+        return Err(Error::OutOfRange {
+            field: "JEF extents (implementation cap)",
+        });
+    }
 
     let mut body = Vec::new();
     let mut records = 0usize;

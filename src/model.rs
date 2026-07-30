@@ -116,19 +116,27 @@ pub struct Design {
 impl Design {
     /// Accumulates every command's delta and returns the signed
     /// bounding box of all needle positions (the origin included).
+    /// Accumulation is 64-bit and the result saturates at the `i32`
+    /// range, so hostile inputs cannot overflow.
     pub fn extents(&self) -> Extents {
-        let (mut x, mut y) = (0i32, 0i32);
-        let mut e = Extents::default();
+        let (mut x, mut y) = (0i64, 0i64);
+        let (mut min_x, mut max_x, mut min_y, mut max_y) = (0i64, 0i64, 0i64, 0i64);
         for c in &self.commands {
             let (dx, dy) = c.delta();
-            x += dx;
-            y += dy;
-            e.min_x = e.min_x.min(x);
-            e.max_x = e.max_x.max(x);
-            e.min_y = e.min_y.min(y);
-            e.max_y = e.max_y.max(y);
+            x += dx as i64;
+            y += dy as i64;
+            min_x = min_x.min(x);
+            max_x = max_x.max(x);
+            min_y = min_y.min(y);
+            max_y = max_y.max(y);
         }
-        e
+        let sat = |v: i64| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+        Extents {
+            min_x: sat(min_x),
+            max_x: sat(max_x),
+            min_y: sat(min_y),
+            max_y: sat(max_y),
+        }
     }
 
     /// Aggregate command counts.
@@ -159,16 +167,18 @@ impl Design {
 
     /// The absolute needle positions after each command, starting
     /// from the origin. Useful for rendering and for cross-format
-    /// comparison of the sewn path.
+    /// comparison of the sewn path. Positions saturate at the `i32`
+    /// range (see [`Design::extents`]).
     pub fn positions(&self) -> Vec<(i32, i32)> {
-        let (mut x, mut y) = (0i32, 0i32);
+        let (mut x, mut y) = (0i64, 0i64);
+        let sat = |v: i64| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
         self.commands
             .iter()
             .map(|c| {
                 let (dx, dy) = c.delta();
-                x += dx;
-                y += dy;
-                (x, y)
+                x += dx as i64;
+                y += dy as i64;
+                (sat(x), sat(y))
             })
             .collect()
     }

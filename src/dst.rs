@@ -390,6 +390,15 @@ pub fn encode(design: &Design, options: &DstEncodeOptions) -> Result<Vec<u8>> {
     if options.label.len() > 16 || !options.label.is_ascii() {
         return Err(Error::OutOfRange { field: "DST label" });
     }
+    // The header's extent fields are 5 digits and AX/AY are a sign
+    // plus 5 digits, so every needle position must stay within
+    // ±99999 units — this also bounds the record-splitting loops.
+    let pre = design.extents();
+    if pre.min_x < -99_999 || pre.max_x > 99_999 || pre.min_y < -99_999 || pre.max_y > 99_999 {
+        return Err(Error::OutOfRange {
+            field: "DST extents (header fields are 5 digits)",
+        });
+    }
     let mut body = Vec::new();
     let mut records = 0usize;
     let mut color_changes = 0usize;

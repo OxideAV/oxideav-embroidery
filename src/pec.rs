@@ -419,7 +419,19 @@ pub fn encode_block(design: &Design, options: &PecEncodeOptions) -> Result<Vec<u
         });
     }
 
+    let pre = design.extents();
+    if pre.width() >= 0xFFFF || pre.height() >= 0xFFFF {
+        return Err(Error::OutOfRange {
+            field: "PEC design size (section-2 width/height are u16)",
+        });
+    }
+
     let stitches = encode_stitches(design)?;
+    if SECTION2_LEN + stitches.len() > 0xFF_FFFF {
+        return Err(Error::OutOfRange {
+            field: "PEC stitch data (thumbnail pointer is 3 bytes)",
+        });
+    }
 
     let mut sec1 = Vec::with_capacity(SECTION1_LEN);
     sec1.extend_from_slice(format!("LA:{:<16}\r", options.label).as_bytes());

@@ -87,6 +87,19 @@ fn push_move(out: &mut Vec<u8>, mut dx: i32, mut dy: i32, control: Option<u8>) {
 /// expressed as a jump (EXP has no confirmed trim escape);
 /// [`Command::Stop`] is unsupported.
 pub fn encode(design: &Design) -> Result<Vec<u8>> {
+    // EXP stores no extents, so there is no format limit to enforce;
+    // this implementation cap (±10 m) keeps hostile designs from
+    // driving the record-splitting loop unboundedly.
+    let pre = design.extents();
+    if pre.min_x < -1_000_000
+        || pre.max_x > 1_000_000
+        || pre.min_y < -1_000_000
+        || pre.max_y > 1_000_000
+    {
+        return Err(Error::OutOfRange {
+            field: "EXP extents (implementation cap)",
+        });
+    }
     let mut out = Vec::new();
     for c in &design.commands {
         match *c {
