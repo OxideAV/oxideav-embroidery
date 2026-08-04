@@ -35,6 +35,7 @@ counts / absolute-position helpers.
 | Husqvarna VIP | ◐ | — | HUS's header layout with its own magic and 44 inserted bytes (surfaced raw); same decompression blocker |
 | Husqvarna/Pfaff VP3 | ◐ | — | Signature probe + producer-string skim; stitch section undocumented |
 | Compucon/Singer XXX | ◐ | — | 256-byte header (colour count at `0x27`, corpus-validated) + raw sections; no signature so extension-gated, record vocabulary undocumented |
+| Bernina ART | — | — | Extension-family recognition + version-from-extension hints only; the staged material is vendor statements about contents — no structure is documented anywhere and no sample is held |
 
 `probe()` identifies every signature-bearing format; `decode()`
 dispatches to the right module and returns the `Design`.

@@ -41,6 +41,10 @@ All notable changes to this project will be documented in this file.
   corpus-validated colour count at `0x27`, raw sections surfaced;
   extension-gated (no signature exists) and stitch decode blocked on
   the unestablished record vocabulary.
+- Bernina ART extension-family recognition with
+  version-from-extension hints (`.art42` … `.art90`); everything
+  structural is a documented total gap upstream, so no content probe
+  or parser exists yet.
 - Format `probe()`/`decode()` dispatch and a cross-format agreement
   test suite over self-synthesized designs.
 - Bootstrap scaffold: crate layout, CI shims, license, error stub.
