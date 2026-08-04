@@ -1,5 +1,8 @@
-//! Machine-embroidery design formats — Tajima DST and the Brother
-//! PES / PEC / PHC / PHX family, plus Melco EXP and Janome JEF.
+//! Machine-embroidery design formats — Tajima DST, the Brother
+//! PES / PEC / PHC / PHB / PHX family, Melco EXP (with the `.inf`
+//! and `.col` colour companions) and Janome JEF, plus
+//! header/metadata depth for Husqvarna HUS / VIP, VP3 and
+//! Compucon/Singer XXX and extension recognition for Bernina ART.
 //!
 //! Embroidery files drive computerised embroidery machines: a flat
 //! list of relative needle moves plus machine commands (jump, trim,

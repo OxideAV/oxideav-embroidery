@@ -1,9 +1,12 @@
 # oxideav-embroidery
 
-Pure-Rust machine-embroidery design formats: **Tajima DST** and the
-**Brother PES / PEC / PHC / PHX** family, plus **Melco EXP** (with its
-`.inf` colour companion) and **Janome JEF** — decode to a typed
-stitch-design model and encode back.
+Pure-Rust machine-embroidery design formats: **Tajima DST**, the
+**Brother PES / PEC / PHC / PHB / PHX** family, **Melco EXP** (with
+its `.inf` and `.col` colour companions) and **Janome JEF** — decode
+to a typed stitch-design model and encode back — plus
+header/metadata depth for **Husqvarna HUS / VIP**, **VP3** and
+**Compucon/Singer XXX**, exactly as far as the staged clean-room
+documentation reaches.
 
 Part of the [OxideAV](https://github.com/OxideAV) workspace: every
 format is implemented clean-room from the workspace's staged
@@ -38,25 +41,34 @@ counts / absolute-position helpers.
 | Bernina ART | — | — | Extension-family recognition + version-from-extension hints only; the staged material is vendor statements about contents — no structure is documented anywhere and no sample is held |
 
 `probe()` identifies every signature-bearing format; `decode()`
-dispatches to the right module and returns the `Design`.
+dispatches to the right module and returns the `Design`. EXP and XXX
+carry no signature and are decoded/parsed by extension through their
+modules; ART cannot even be that (no structural fact about it is
+documented anywhere), so its module only recognises the extension
+family.
 
 ## Validation
 
 The staged documentation was validated upstream against purchased
-commercial design bundles carrying the same artwork in up to twelve
-formats (see `docs/embroidery/provenance/` in the workspace). Those
-designs are copyrighted and are **not** part of this repository; the
-test suite instead re-applies the same methodology to self-synthesized
-designs — encoding one model into every writable format and requiring
-byte-level and stitch-list agreement on decode — alongside the staged
-documentation's worked byte examples and validated header formulas,
+commercial design bundles carrying the same artwork in up to
+**62 formats** (see `docs/embroidery/provenance/` and
+`docs/embroidery/corpus-map.md` in the workspace). Those designs are
+copyrighted and are **not** part of this repository; the test suite
+instead re-applies the same methodology to self-synthesized designs —
+encoding one model into every writable format and requiring byte-level
+and stitch-list agreement on decode — alongside the staged
+documentation's worked byte examples and validated header formulas
+(the PHC/PHB stitch-offset rules at three colour counts among them),
 which are locked in as unit tests.
 
 Known unpinned details (encoder choices documented in the module docs,
 awaiting further staged material): DST numeric-field padding, PEC
 section-1 filler and two opaque section-2 fields, the JEF second
 per-colour array, cross-format axis-sign conventions, and everything
-listed under each module's "unvalidated" caveats.
+listed under each module's "unvalidated" caveats. On axis signs, the
+staged corpus adds a caveat: commercial bundles are not consistently
+oriented (rotated exports exist), so cross-format comparisons should
+match extents as a set, not as an ordered pair.
 
 ## License
 
