@@ -73,6 +73,8 @@ pub enum Format {
     Jef,
     /// Husqvarna Viking HUS (header/metadata only).
     Hus,
+    /// Husqvarna Viking VIP (HUS's successor; header/metadata only).
+    Vip,
     /// Husqvarna Viking / Pfaff VP3 (signature/metadata only).
     Vp3,
 }
@@ -95,6 +97,8 @@ pub fn probe(data: &[u8]) -> Option<Format> {
         Some(Format::Phx)
     } else if hus::probe(data) {
         Some(Format::Hus)
+    } else if hus::probe_vip(data) {
+        Some(Format::Vip)
     } else if vp3::probe(data) {
         Some(Format::Vp3)
     } else if dst::probe(data) {
@@ -121,9 +125,9 @@ pub fn decode(data: &[u8]) -> Result<(Format, Design)> {
         Format::Phb => phc::decode_phb(data)?.design,
         Format::Phx => phx::decode(data)?.design,
         Format::Jef => jef::decode(data)?.design,
-        Format::Hus => {
+        Format::Hus | Format::Vip => {
             return Err(Error::Unsupported {
-                what: "HUS stitch streams use a compression scheme the staged documentation does not cover",
+                what: "HUS/VIP stitch streams use a compression scheme the staged documentation does not cover",
             });
         }
         Format::Vp3 => {

@@ -30,6 +30,9 @@ All notable changes to this project will be documented in this file.
   `80 01/02/10` escapes.
 - Husqvarna HUS header/metadata parsing (stitch streams blocked on
   undocumented compression).
+- Husqvarna VIP header/metadata parsing: HUS's validated layout with
+  its own magic; the 44 inserted bytes ahead of the block area are
+  surfaced raw (`HusFile::unmapped`, also present on HUS parses).
 - Husqvarna/Pfaff VP3 signature probe + producer-string skim (stitch
   section undocumented).
 - Format `probe()`/`decode()` dispatch and a cross-format agreement
