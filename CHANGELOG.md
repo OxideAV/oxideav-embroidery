@@ -26,6 +26,8 @@ All notable changes to this project will be documented in this file.
   exists): header walk, RGB colour list, bitmap section, chunked
   body, PEC stream via `#VAR`.
 - Melco EXP decode + encode plus the `.inf` colour companion.
+- `.col` plain-text colour-companion decode + encode (count line +
+  `index,R,G,B` records; corpus-validated against `.inf` values).
 - Janome JEF decode + encode: validated header, colour table,
   `80 01/02/10` escapes.
 - Husqvarna HUS header/metadata parsing (stitch streams blocked on

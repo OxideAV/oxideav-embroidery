@@ -29,6 +29,7 @@ counts / absolute-position helpers.
 | Brother PHB | ✅ | — | PHC's multi-design sibling: second copyright string, body shifted +36, 9-byte design-record head (design count is a documented hint, not proven), PEC stream at `259 + 230 × colours + 45` |
 | Brother PHX | ◐ | — | Best-effort decode per the staged vendor-reader analysis; **no real `.phx` sample exists anywhere**, so the parser is unvalidated by design |
 | Melco EXP | ✅ | ✅ | Headerless stitch list + `.inf` colour companion (decode + encode) |
+| `.col` companion | ✅ | ✅ | Plain-text colour list (count line + `index,R,G,B` records); corpus-validated to carry the same RGBs as the `.inf` sibling |
 | Janome JEF | ✅ | ✅ | Validated header, colour table, `80 01/02/10` escapes |
 | Husqvarna HUS | ◐ | — | Header, extents, palette and the three raw compressed streams; stitch decompression undocumented |
 | Husqvarna VIP | ◐ | — | HUS's header layout with its own magic and 44 inserted bytes (surfaced raw); same decompression blocker |

@@ -40,6 +40,7 @@
 //! # Ok::<(), oxideav_embroidery::Error>(())
 //! ```
 
+pub mod col;
 pub mod dst;
 pub mod exp;
 pub mod hus;
