@@ -65,6 +65,8 @@ pub enum Format {
     Pec,
     /// Brother PHC (machine-side design).
     Phc,
+    /// Brother PHB (PHC's multi-design sibling).
+    Phb,
     /// Brother PHX (current-generation machine-side design).
     Phx,
     /// Janome JEF.
@@ -87,6 +89,8 @@ pub fn probe(data: &[u8]) -> Option<Format> {
         Some(Format::Pec)
     } else if phc::probe(data) {
         Some(Format::Phc)
+    } else if phc::probe_phb(data) {
+        Some(Format::Phb)
     } else if phx::probe(data) {
         Some(Format::Phx)
     } else if hus::probe(data) {
@@ -114,6 +118,7 @@ pub fn decode(data: &[u8]) -> Result<(Format, Design)> {
         Format::Pes => pes::decode(data)?.pec.design,
         Format::Pec => pec::decode(data)?.design,
         Format::Phc => phc::decode(data)?.design,
+        Format::Phb => phc::decode_phb(data)?.design,
         Format::Phx => phx::decode(data)?.design,
         Format::Jef => jef::decode(data)?.design,
         Format::Hus => {

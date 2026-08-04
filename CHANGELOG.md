@@ -19,6 +19,9 @@ All notable changes to this project will be documented in this file.
   mapped) and container-minimal `#PES0001` encode.
 - Brother PHC decode: validated container layout, palette,
   thumbnails, raw design record, PEC stream at the structural offset.
+- Brother PHB decode: PHC's multi-design sibling (second copyright
+  string, +36 body shift, `259 + 230n + 45` stitch offset, design
+  count surfaced as a documented-but-unproven hint).
 - Brother PHX best-effort decode (unvalidated — no real sample
   exists): header walk, RGB colour list, bitmap section, chunked
   body, PEC stream via `#VAR`.

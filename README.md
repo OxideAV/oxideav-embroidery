@@ -26,6 +26,7 @@ counts / absolute-position helpers.
 | Brother PEC | ✅ | ✅ | Standalone `.pec` and the embedded block; short/long-form axis codec, jump/trim flags, colour changes, 48×38 1-bit thumbnails (rendered on encode); ships the Brother 64-entry thread table as data |
 | Brother PES | ✅ | ◐ | Decode via the embedded PEC block, design section preserved raw; all 30 recognised version codes mapped. Encode is container-minimal `#PES0001` (no vector object model — documented upstream only in implementation-derived sources this workspace does not use) |
 | Brother PHC | ✅ | — | Validated container layout; PEC stream at the structural offset (`259 + 230 × colours` at standard geometry). No encode: the 163-byte design-record core is undocumented |
+| Brother PHB | ✅ | — | PHC's multi-design sibling: second copyright string, body shifted +36, 9-byte design-record head (design count is a documented hint, not proven), PEC stream at `259 + 230 × colours + 45` |
 | Brother PHX | ◐ | — | Best-effort decode per the staged vendor-reader analysis; **no real `.phx` sample exists anywhere**, so the parser is unvalidated by design |
 | Melco EXP | ✅ | ✅ | Headerless stitch list + `.inf` colour companion (decode + encode) |
 | Janome JEF | ✅ | ✅ | Validated header, colour table, `80 01/02/10` escapes |
