@@ -1,8 +1,8 @@
 //! Cross-format agreement tests.
 //!
-//! The staged corpus validation (docs/embroidery/provenance/05, 06)
-//! established that one design encoded into many formats decodes to
-//! the same stitch list. The purchased corpus itself cannot be
+//! The staged corpus validation (docs/embroidery/provenance/05, 06,
+//! 07) established that one design encoded into many formats decodes
+//! to the same stitch list. The purchased corpus itself cannot be
 //! committed (copyrighted commercial designs), so these tests apply
 //! the same methodology to a self-synthesized design: encode one
 //! model into every writable format, decode each file back, and
@@ -174,6 +174,15 @@ fn probe_dispatch_identifies_every_signature_format() {
     assert_eq!(oxideav_embroidery::probe(&pes_bytes), Some(Format::Pes));
     assert_eq!(oxideav_embroidery::probe(&jef_bytes), Some(Format::Jef));
     assert_eq!(oxideav_embroidery::probe(b"not an embroidery file"), None);
+
+    // Signature-bearing formats whose full decode is elsewhere:
+    // magic-only buffers must still probe to the right family.
+    let mut phb_head = b"#PHB0003".to_vec();
+    phb_head.resize(64, 0);
+    assert_eq!(oxideav_embroidery::probe(&phb_head), Some(Format::Phb));
+    let mut vip_head = 0x0190_FC5Du32.to_le_bytes().to_vec();
+    vip_head.resize(64, 0);
+    assert_eq!(oxideav_embroidery::probe(&vip_head), Some(Format::Vip));
 
     let (fmt, decoded) = oxideav_embroidery::decode(&pes_bytes).unwrap();
     assert_eq!(fmt, Format::Pes);

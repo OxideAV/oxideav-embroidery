@@ -5,7 +5,9 @@
 //! byte-flipped mutations of valid encodes, and truncations at every
 //! interesting boundary.
 
-use oxideav_embroidery::{dst, exp, hus, jef, pec, pes, phc, phx, vp3, Command, Design};
+use oxideav_embroidery::{
+    art, col, dst, exp, hus, jef, pec, pes, phc, phx, vp3, xxx, Command, Design,
+};
 
 struct Lcg(u32);
 
@@ -24,12 +26,17 @@ fn try_all_decoders(data: &[u8]) {
     let _ = pec::decode_block(data);
     let _ = pes::decode(data);
     let _ = phc::decode(data);
+    let _ = phc::decode_phb(data);
     let _ = phx::decode(data);
     let _ = exp::decode(data);
     let _ = exp::decode_inf(data);
     let _ = jef::decode(data);
     let _ = hus::parse(data);
+    let _ = hus::parse_vip(data);
     let _ = vp3::parse(data);
+    let _ = xxx::parse(data);
+    let _ = col::decode(data);
+    let _ = art::decode_design(data);
 }
 
 fn valid_design() -> Design {
@@ -56,12 +63,26 @@ fn valid_design() -> Design {
 
 fn valid_encodes() -> Vec<Vec<u8>> {
     let d = valid_design();
+    let threads = vec![
+        oxideav_embroidery::Thread {
+            palette_index: Some(1),
+            rgb: Some([0, 254, 0]),
+            ..Default::default()
+        },
+        oxideav_embroidery::Thread {
+            palette_index: Some(2),
+            rgb: Some([0, 28, 223]),
+            ..Default::default()
+        },
+    ];
     vec![
         dst::encode(&d, &dst::DstEncodeOptions::default()).unwrap(),
         pec::encode(&d, &pec::PecEncodeOptions::default()).unwrap(),
         pes::encode(&d, &pec::PecEncodeOptions::default()).unwrap(),
         exp::encode(&d).unwrap(),
         jef::encode(&d, &jef::JefEncodeOptions::default()).unwrap(),
+        exp::encode_inf(&threads).unwrap(),
+        col::encode(&threads).unwrap(),
     ]
 }
 
@@ -83,8 +104,12 @@ fn magic_prefixed_random_tails_do_not_panic() {
         b"#PES0001".as_slice(),
         b"#PEC0001",
         b"#PHC0001",
+        b"#PHB0003",
         b"#PHX0200",
         b"LA:x    ",
+        b"\x5B\xAF\xC8\x00",
+        b"\x5D\xFC\x90\x01",
+        b"%vsm%",
     ] {
         for len in [0usize, 4, 40, 600, 1500] {
             for _ in 0..25 {
