@@ -120,8 +120,17 @@ fn parse_num(raw: &str) -> Option<i32> {
     t.parse::<i32>().ok()
 }
 
-/// Decodes a DST file.
-pub fn decode(data: &[u8]) -> Result<DstFile> {
+/// Parses the 512-byte ASCII header alone.
+///
+/// Exposed separately because, per the staged corpus mapping
+/// (`docs/embroidery/corpus-map.md`), the Barudan `.dsb` and ZSK
+/// `.dsz` tape formats carry the **identical** `LA:`-prefixed
+/// 512-byte header while their 3-byte stitch records use different,
+/// undocumented bit assignments (the ternary table decodes them to
+/// nonsense geometry — a validated negative). For those files this
+/// header parse is the full documented depth; do not run
+/// [`decode`]'s record loop on them.
+pub fn decode_header(data: &[u8]) -> Result<DstHeader> {
     if data.len() < HEADER_LEN {
         return Err(Error::UnexpectedEof {
             context: "DST header",
@@ -161,6 +170,12 @@ pub fn decode(data: &[u8]) -> Result<DstFile> {
     header.mx = values[9].as_deref().and_then(parse_num);
     header.my = values[10].as_deref().and_then(parse_num);
     header.pd = values[11].as_ref().map(|s| s.trim().to_string());
+    Ok(header)
+}
+
+/// Decodes a DST file.
+pub fn decode(data: &[u8]) -> Result<DstFile> {
+    let header = decode_header(data)?;
 
     let mut commands = Vec::new();
     let mut terminated = false;
@@ -636,5 +651,31 @@ mod tests {
     fn bad_magic_rejected() {
         let bytes = vec![b'X'; 600];
         assert!(matches!(decode(&bytes), Err(Error::BadMagic { .. })));
+    }
+
+    #[test]
+    fn header_only_parse_reads_a_tape_family_header() {
+        // The corpus mapping documents that .dsb/.dsz carry DST's
+        // 512-byte header verbatim over differently-encoded records.
+        // decode_header must therefore work on exactly one header
+        // with no decodable body behind it.
+        let d = sample_design();
+        let full = encode(
+            &d,
+            &DstEncodeOptions {
+                label: "TAPEFAM".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut header_only = full[..HEADER_LEN].to_vec();
+        // Splice in an undecodable record body of the sibling shape.
+        header_only.extend_from_slice(&[0xA1, 0x65, 0x1F]);
+        let h = decode_header(&header_only).unwrap();
+        assert_eq!(h.label, "TAPEFAM");
+        assert_eq!(h.color_changes, Some(d.counts().color_changes as u32));
+        let e = d.extents();
+        assert_eq!(h.pos_x, Some(e.max_x.max(0)));
+        assert_eq!(h.neg_y, Some((-e.min_y).max(0)));
     }
 }

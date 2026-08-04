@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
   palette, extents/counts/position helpers.
 - Tajima DST decode + encode: ternary stitch records, ASCII header,
   trim-by-jump-run convention, stray-trailing-byte tolerance.
+- `dst::decode_header` as a standalone entry point for the
+  corpus-documented tape-family siblings (Barudan DSB, ZSK DSZ) that
+  carry DST's 512-byte header verbatim over differently-encoded,
+  undocumented records.
 - Brother PEC decode + encode (standalone `.pec` and the embedded
   block): short/long-form axis codec, jump/trim flags, colour
   changes, per-colour 1-bit thumbnails, and the Brother 64-entry

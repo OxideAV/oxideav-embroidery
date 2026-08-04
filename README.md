@@ -25,7 +25,7 @@ counts / absolute-position helpers.
 
 | Format | Decode | Encode | Notes |
 | ------ | ------ | ------ | ----- |
-| Tajima DST | ✅ | ✅ | Ternary 3-byte records, 512-byte ASCII header, trim-by-jump-run convention, tolerance for the stray-trailing-byte digitiser variant |
+| Tajima DST | ✅ | ✅ | Ternary 3-byte records, 512-byte ASCII header, trim-by-jump-run convention, tolerance for the stray-trailing-byte digitiser variant; `decode_header` exposed alone for the tape-family siblings (Barudan DSB, ZSK DSZ) that share the header over undocumented records |
 | Brother PEC | ✅ | ✅ | Standalone `.pec` and the embedded block; short/long-form axis codec, jump/trim flags, colour changes, 48×38 1-bit thumbnails (rendered on encode); ships the Brother 64-entry thread table as data |
 | Brother PES | ✅ | ◐ | Decode via the embedded PEC block, design section preserved raw; all 30 recognised version codes mapped. Encode is container-minimal `#PES0001` (no vector object model — documented upstream only in implementation-derived sources this workspace does not use) |
 | Brother PHC | ✅ | — | Validated container layout; PEC stream at the structural offset (`259 + 230 × colours` at standard geometry). No encode: the 163-byte design-record core is undocumented |
