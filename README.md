@@ -33,6 +33,7 @@ counts / absolute-position helpers.
 | Husqvarna HUS | ◐ | — | Header, extents, palette and the three raw compressed streams; stitch decompression undocumented |
 | Husqvarna VIP | ◐ | — | HUS's header layout with its own magic and 44 inserted bytes (surfaced raw); same decompression blocker |
 | Husqvarna/Pfaff VP3 | ◐ | — | Signature probe + producer-string skim; stitch section undocumented |
+| Compucon/Singer XXX | ◐ | — | 256-byte header (colour count at `0x27`, corpus-validated) + raw sections; no signature so extension-gated, record vocabulary undocumented |
 
 `probe()` identifies every signature-bearing format; `decode()`
 dispatches to the right module and returns the `Design`.

@@ -35,6 +35,10 @@ All notable changes to this project will be documented in this file.
   surfaced raw (`HusFile::unmapped`, also present on HUS parses).
 - Husqvarna/Pfaff VP3 signature probe + producer-string skim (stitch
   section undocumented).
+- Compucon/Singer XXX header parsing: 256-byte header with the
+  corpus-validated colour count at `0x27`, raw sections surfaced;
+  extension-gated (no signature exists) and stitch decode blocked on
+  the unestablished record vocabulary.
 - Format `probe()`/`decode()` dispatch and a cross-format agreement
   test suite over self-synthesized designs.
 - Bootstrap scaffold: crate layout, CI shims, license, error stub.
