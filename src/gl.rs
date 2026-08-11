@@ -507,8 +507,8 @@ pub fn compress(data: &[u8]) -> Vec<u8> {
             small_freq[s as usize] += 1;
         }
         let small_lengths = huffman_lengths(&small_freq);
-        let small_set = CodeSet::from_lengths(&small_lengths).expect("own lengths are canonical");
-        let lit_set = CodeSet::from_lengths(&lit_lengths).expect("own lengths are canonical");
+        let small_codes = codes_from_lengths(&small_lengths);
+        let lit_codes = codes_from_lengths(&lit_lengths);
 
         // Block header: code count.
         let count = chunk.len() + usize::from(is_last);
@@ -539,7 +539,8 @@ pub fn compress(data: &[u8]) -> Vec<u8> {
         // 19-symbol code.
         w.write(lit_n as u32, 9);
         for &(s, extra, extra_bits) in &items {
-            encode_symbol(&mut w, &small_set, s as u32);
+            let (code, len) = small_codes[s as usize];
+            w.write(code, len as u32);
             if extra_bits > 0 {
                 w.write(extra, extra_bits);
             }
@@ -551,16 +552,50 @@ pub fn compress(data: &[u8]) -> Vec<u8> {
 
         // The codes themselves.
         for &b in chunk.iter() {
-            encode_symbol(&mut w, &lit_set, b as u32);
+            let (code, len) = lit_codes[b as usize];
+            w.write(code, len as u32);
         }
         if is_last {
-            encode_symbol(&mut w, &lit_set, EOS as u32);
+            let (code, len) = lit_codes[EOS];
+            w.write(code, len as u32);
         }
     }
     w.finish()
 }
 
-/// Writes one symbol with its canonical code.
+/// Per-symbol `(code, length)` table for a canonical length set
+/// (length 0 = unused symbol; its entry must not be written).
+fn codes_from_lengths(lengths: &[u8]) -> Vec<(u32, u8)> {
+    let mut count = [0u32; MAX_CODE_LEN as usize + 1];
+    for &l in lengths {
+        if l > 0 {
+            count[l as usize] += 1;
+        }
+    }
+    let mut next_code = [0u32; MAX_CODE_LEN as usize + 1];
+    let mut code = 0u32;
+    for l in 1..=MAX_CODE_LEN as usize {
+        next_code[l] = code;
+        code = (code + count[l]) << 1;
+    }
+    lengths
+        .iter()
+        .map(|&l| {
+            if l == 0 {
+                (0, 0)
+            } else {
+                let c = next_code[l as usize];
+                next_code[l as usize] += 1;
+                (c, l)
+            }
+        })
+        .collect()
+}
+
+/// Test helper: writes one symbol by walking its canonical code set
+/// (slow linear scan — the production encoder uses
+/// [`codes_from_lengths`] tables).
+#[cfg(test)]
 fn encode_symbol(w: &mut BitWriter, set: &CodeSet, sym: u32) {
     let CodeSet::Canonical(c) = set else {
         return; // degenerate sets encode nothing
