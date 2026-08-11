@@ -14,3 +14,14 @@ jobs:
   ci:
     uses: OxideAV/.github/.github/workflows/crate-ci.yml@master
     secrets: inherit
+
+  # The `registry` feature (default-on) carries the oxideav-core
+  # integration; this leg proves the dependency-free standalone build
+  # path stays healthy with the feature off.
+  ci-standalone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --no-default-features
+      - run: cargo test --no-default-features
+      - run: cargo clippy --no-default-features --all-targets --no-deps -- -D warnings

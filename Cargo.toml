@@ -13,4 +13,10 @@ keywords = ["embroidery", "dst", "pes", "tajima", "brother"]
 categories = ["multimedia::encoding", "parser-implementations"]
 
 [dependencies]
-oxideav-core = "0.1"
+oxideav-core = { version = "0.1", optional = true }
+
+[features]
+default = ["registry"]
+# oxideav-core framework integration (registry + demuxer + vector
+# decoder). Disable for the dependency-free standalone build.
+registry = ["dep:oxideav-core"]

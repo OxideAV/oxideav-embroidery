@@ -48,6 +48,8 @@ pub mod col;
 pub mod dst;
 pub mod edr;
 pub mod exp;
+#[cfg(feature = "registry")]
+pub mod framework;
 pub mod gl;
 pub mod hus;
 pub mod jef;
@@ -60,6 +62,14 @@ pub mod vp3;
 pub mod xxx;
 
 pub use model::{Command, Counts, Design, Extents, Thread};
+
+#[cfg(feature = "registry")]
+pub use framework::{design_to_vector, make_decoder, make_demuxer, register};
+
+// The canonical sibling entry point the umbrella's register_all
+// dispatches to.
+#[cfg(feature = "registry")]
+oxideav_core::register!("embroidery", framework::register);
 
 /// The file formats this crate recognises.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
