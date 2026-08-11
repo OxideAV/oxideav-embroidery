@@ -4,6 +4,43 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.2](https://github.com/OxideAV/oxideav-embroidery/compare/v0.0.1...v0.0.2) - 2026-08-11
+
+### Other
+
+- table-driven symbol emission in the encoder
+- sweep gl/edr/hus-decode/hus-encode through the robustness harness
+- README + CHANGELOG for the round-440 arc
+- oxideav-core integration — registry, demuxer, vector decoder
+- the container family — PTN as plain JEF, JEF+/JPX stitch decode
+- decode + encode the RGB colour companion; accept both .inf record-area conventions
+- pin the round-1 open encoder choices to the corpus findings
+- full HUS/VIP stitch decode + encode over the GL bitstream
+- ArchiveLib GL bitstream — decoder + literal-only encoder
+- describe the widened format family
+- expose decode_header for the shared tape-family header
+- align crate docs with the widened format coverage
+- sweep the new surfaces through robustness + dispatch
+- extension-family recognition to the staged depth
+- decode + encode the plain-text colour companion
+- parse the documented 256-byte header
+- parse the HUS-layout header behind its own magic
+- decode PHC's multi-design sibling
+- vendor-neutral name for the stray-byte tolerance test
+- signature probe + producer-string skim
+- reject impossible .inf colour counts before allocating
+- crate-level roundtrip doctest
+- saturating extents/positions, encode-side range guards, robustness suite
+- README format-support matrix + CHANGELOG for the round-1 surface
+- cross-format agreement oracle over self-synthesized designs
+- phx, hus: PHX best-effort decode (unvalidated) + HUS header/metadata; format probe/dispatch
+- exp, jef: Melco EXP (+ .inf companion) and Janome JEF, decode + encode
+- Brother PHC decode via its embedded PEC stream
+- Brother PES container decode + container-minimal encode
+- Brother PEC block + standalone .pec, decode + encode
+- Tajima DST decode + encode
+- typed stitch-design model (commands, threads, extents, counts)
+
 ### Added
 
 - ArchiveLib GL bitstream module (`gl`): full decoder for the
