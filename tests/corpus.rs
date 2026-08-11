@@ -16,7 +16,7 @@
 
 use std::path::{Path, PathBuf};
 
-use oxideav_embroidery::{col, dst, edr, exp, gl, hus, Command, Format};
+use oxideav_embroidery::{col, dst, edr, exp, gl, hus, jef, Command, Format};
 
 fn corpus_root() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("OXIDEAV_EMBROIDERY_CORPUS") {
@@ -212,6 +212,36 @@ fn probe_and_decode_sweep() {
         let data = std::fs::read(&path).unwrap();
         let h = dst::decode_header(&data).unwrap();
         assert!(h.stitch_records.unwrap_or(0) > 0, "{}", path.display());
+    }
+}
+
+/// The JEF container family: a `.ptn` decodes identically to its
+/// `.jef` sibling, and the flag-1 members (`.jef+`, `.jpx`) yield
+/// the same stitch commands with no colour table.
+#[test]
+fn jef_family_agrees_with_jef_sibling() {
+    for path in corpus_files(&["ptn", "jef+", "jpx"]) {
+        let sibling = path.with_extension("jef");
+        if !sibling.exists() {
+            continue;
+        }
+        let member = jef::decode(&std::fs::read(&path).unwrap()).unwrap();
+        let base = jef::decode(&std::fs::read(&sibling).unwrap()).unwrap();
+        assert_eq!(
+            member.design.commands,
+            base.design.commands,
+            "{}",
+            path.display()
+        );
+        let ext = path.extension().unwrap().to_str().unwrap();
+        if ext.eq_ignore_ascii_case("ptn") {
+            assert_eq!(member.format_flag, jef::FORMAT_FLAG_JEF);
+            assert_eq!(member.color_table, base.color_table, "{}", path.display());
+        } else {
+            assert_eq!(member.format_flag, jef::FORMAT_FLAG_PLUS);
+            assert!(member.color_table.is_empty());
+            assert!(member.date_string().is_some() || ext.eq_ignore_ascii_case("jpx"));
+        }
     }
 }
 

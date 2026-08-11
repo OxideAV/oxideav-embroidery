@@ -8,6 +8,21 @@
 //! the escape byte — `80 01` + delta pair = colour change, `80 02` +
 //! delta pair = jump, `80 10` = end of design.
 //!
+//! **The JEF container family** (corpus-pinned): `.jef`, `.ptn`,
+//! `.jef+` and `.jpx` share this container, distinguished by the
+//! format flag at 0x04 — JEF and PTN carry 10, JEF+ and JPX carry 1.
+//! A `.ptn` is a plain JEF (the corpus's Small `.ptn` is
+//! byte-identical to its `.jef`). The flag-1 members carry the same
+//! stitch vocabulary at their stitch offset (corpus-observed: the
+//! walk ends on `80 10` exactly), but their colour-table layout past
+//! the fixed header is not pinned — JPX does not even keep the
+//! colour count at 0x18 — so flag-1 decode returns the stitch design
+//! with an empty colour table and ignores any bytes after the end
+//! marker (JEF+ carries a second, undocumented region there). The
+//! date field at 0x08 is real: PTN/JPX/JEF+ writers stamp
+//! `"20170330203029"`-style ASCII dates where plain JEF may leave it
+//! zero-filled.
+//!
 //! One detail is derived here from the staged numbers rather than
 //! stated outright by them, and is recorded as an auditable choice:
 //! the header record count equals stitches + 2×jumps + 2×colour
@@ -47,6 +62,21 @@ pub struct JefFile {
     pub design: Design,
 }
 
+impl JefFile {
+    /// The ASCII date stamp from the 0x08 area
+    /// (`"20170330203029"`-style), when the writer populated it.
+    /// PTN/JPX/JEF+ writers stamp it; plain JEF may zero-fill.
+    pub fn date_string(&self) -> Option<&str> {
+        let end = self
+            .date
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(self.date.len());
+        let s = std::str::from_utf8(&self.date[..end]).ok()?;
+        (!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())).then_some(s)
+    }
+}
+
 /// Encoding options.
 #[derive(Debug, Clone, Default)]
 pub struct JefEncodeOptions {
@@ -61,16 +91,22 @@ pub struct JefEncodeOptions {
 
 const HEADER_FIXED: usize = 0x74;
 
-/// Returns true when `data` plausibly starts a JEF file: the stitch
-/// offset points inside the file past the fixed header and the
-/// format flag area looks sane.
+/// Format flag of plain JEF (and PTN).
+pub const FORMAT_FLAG_JEF: u32 = 10;
+/// Format flag of the JEF+ / JPX family members.
+pub const FORMAT_FLAG_PLUS: u32 = 1;
+
+/// Returns true when `data` plausibly starts a JEF-family file: the
+/// stitch offset points inside the file past the fixed header and
+/// the format flag is one of the two documented family values.
 pub fn probe(data: &[u8]) -> bool {
     if data.len() < HEADER_FIXED + 4 {
         return false;
     }
     let off = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+    let flag = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
     (HEADER_FIXED..data.len()).contains(&off)
-        && u32::from_le_bytes([data[4], data[5], data[6], data[7]]) < 0x100
+        && (flag == FORMAT_FLAG_JEF || flag == FORMAT_FLAG_PLUS)
 }
 
 /// Decodes a JEF file.
@@ -96,20 +132,43 @@ pub fn decode(data: &[u8]) -> Result<JefFile> {
             *v = i32le(0x34 + g * 16 + k * 4);
         }
     }
-    if colors > 0x100 {
-        return Err(Error::invalid(format!("JEF colour count {colors}")));
-    }
-    if stitch_offset < HEADER_FIXED + 4 * colors || stitch_offset > data.len() {
-        return Err(Error::invalid(format!(
-            "JEF stitch offset {stitch_offset} inconsistent with {colors} colours and {} bytes",
-            data.len()
-        )));
-    }
-    let color_table: Vec<u32> = (0..colors).map(|i| u32le(HEADER_FIXED + 4 * i)).collect();
-    let second_start = HEADER_FIXED + 4 * colors;
-    let second_table: Vec<u32> = (0..(stitch_offset - second_start) / 4)
-        .map(|i| u32le(second_start + 4 * i))
-        .collect();
+    let (color_table, second_table) = match format_flag {
+        FORMAT_FLAG_JEF => {
+            if colors > 0x100 {
+                return Err(Error::invalid(format!("JEF colour count {colors}")));
+            }
+            if stitch_offset < HEADER_FIXED + 4 * colors || stitch_offset > data.len() {
+                return Err(Error::invalid(format!(
+                    "JEF stitch offset {stitch_offset} inconsistent with {colors} colours and {} bytes",
+                    data.len()
+                )));
+            }
+            let table: Vec<u32> = (0..colors).map(|i| u32le(HEADER_FIXED + 4 * i)).collect();
+            let second_start = HEADER_FIXED + 4 * colors;
+            let second: Vec<u32> = (0..(stitch_offset - second_start) / 4)
+                .map(|i| u32le(second_start + 4 * i))
+                .collect();
+            (table, second)
+        }
+        FORMAT_FLAG_PLUS => {
+            // JEF+/JPX: same stitch vocabulary at the stitch offset,
+            // but the colour-table layout is not pinned by the
+            // staged docs (JPX does not keep the count at 0x18), so
+            // no colour data is surfaced.
+            if stitch_offset > data.len() {
+                return Err(Error::invalid(format!(
+                    "JEF+ stitch offset {stitch_offset} beyond {} bytes",
+                    data.len()
+                )));
+            }
+            (Vec::new(), Vec::new())
+        }
+        other => {
+            return Err(Error::invalid(format!(
+                "JEF format flag {other} not documented"
+            )));
+        }
+    };
 
     let mut commands = Vec::new();
     let body = &data[stitch_offset..];
@@ -382,6 +441,42 @@ mod tests {
         let bytes = encode(&d, &JefEncodeOptions::default()).unwrap();
         let f = decode(&bytes).unwrap();
         assert_eq!(f.extents, [64, 90, 63, 90]);
+    }
+
+    #[test]
+    fn family_flag_one_decodes_stitches_without_colors() {
+        // JEF+/JPX: format flag 1, same stitch vocabulary, colour
+        // layout unpinned → empty tables.
+        let d = sample();
+        let mut bytes = encode(&d, &JefEncodeOptions::default()).unwrap();
+        bytes[4..8].copy_from_slice(&FORMAT_FLAG_PLUS.to_le_bytes());
+        assert!(probe(&bytes));
+        let f = decode(&bytes).unwrap();
+        assert_eq!(f.format_flag, FORMAT_FLAG_PLUS);
+        assert!(f.color_table.is_empty());
+        assert!(f.second_table.is_empty());
+        assert_eq!(f.design.commands, d.commands);
+        assert!(f.design.threads.is_empty());
+    }
+
+    #[test]
+    fn undocumented_flag_rejected() {
+        let d = sample();
+        let mut bytes = encode(&d, &JefEncodeOptions::default()).unwrap();
+        bytes[4..8].copy_from_slice(&7u32.to_le_bytes());
+        assert!(!probe(&bytes));
+        assert!(matches!(decode(&bytes), Err(Error::Invalid { .. })));
+    }
+
+    #[test]
+    fn date_string_helper() {
+        let d = sample();
+        let bytes = encode(&d, &JefEncodeOptions::default()).unwrap();
+        let f = decode(&bytes).unwrap();
+        assert_eq!(f.date_string(), None); // zero-filled on encode
+        let mut stamped = f.clone();
+        stamped.date[..14].copy_from_slice(b"20170330203029");
+        assert_eq!(stamped.date_string(), Some("20170330203029"));
     }
 
     #[test]
