@@ -6,8 +6,10 @@
 //! `docs/embroidery/provenance/05-corpus-validation.md`):
 //!
 //! - **Section 1** (512 bytes): `LA:` + 16-byte label + CR at 19,
-//!   colour-count byte at 48 (stored as `colours − 1`), then one
-//!   Brother thread-table index per colour.
+//!   an 11-byte label-continuation area at +20 (corpus-validated:
+//!   long design names continue there, short names show `0x20`
+//!   fill), colour-count byte at 48 (stored as `colours − 1`), then
+//!   one Brother thread-table index per colour.
 //! - **Section 2** (20 bytes): a 3-byte LE pointer at +2 from the
 //!   section start to the thumbnail area (measured from the section-2
 //!   start), design width/height (extent span + 1) at +8/+10.
@@ -20,12 +22,19 @@
 //! - **Thumbnails**: 1-bit images, 48×38 (6-byte stride, 228 bytes),
 //!   one master plus one per colour, MSB-first from top-left.
 //!
-//! Unpinned by the staged documentation and chosen here (auditable
-//! encoder decisions): the fill byte for the unknown regions of
-//! section 1 (space, `0x20`), the two u16-sized fields at section-2
-//! offsets +0 and the 4 trailing bytes at +16 (zero), and the
-//! constant pair `(480, 432)` at +12 observed across the validation
-//! corpus.
+//! Corpus-pinned section constants written by this encoder (each
+//! invariant across all 12 PEC blocks of the validation corpus):
+//! section-1 bytes `FF 00 06 26` at +32 (the last two match the
+//! 6-byte-stride × 38-row thumbnail geometry), section-2 byte `0x31`
+//! at +5 and the u16 `0xF0FF` at +6, and the pair `(480, 432)` at
+//! +12.
+//!
+//! Unpinned and chosen here (auditable encoder decisions): the fill
+//! byte for the remaining unknown regions of section 1 (space,
+//! `0x20`), the u16 at section-2 +0 (zero), and the 4 trailing bytes
+//! at +16 (zero — real writers put a design-derived pair of
+//! big-endian values in `0x9000..=0x9FFF` there whose exact law the
+//! staged material records as unresolved).
 
 use crate::model::{Command, Design, Thread};
 use crate::{Error, Result};
@@ -161,8 +170,14 @@ pub fn brother_thread(index: u8) -> Option<&'static ThreadColor> {
 /// A decoded PEC block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PecBlock {
-    /// `LA:` label.
+    /// `LA:` label (the 16-byte field).
     pub label: String,
+    /// The 11-byte label-continuation area at section-1 +20, when it
+    /// carries text (long design names overflow there). Surfaced raw
+    /// rather than concatenated: the corpus shows the CR at byte 19
+    /// costs the wire one character of a long name, so a decoder
+    /// cannot losslessly reconstruct it.
+    pub label_continuation: Option<String>,
     /// Brother thread-table indices, one per colour block.
     pub palette: Vec<u8>,
     /// Design width from section 2 (extent span + 1).
@@ -435,6 +450,10 @@ pub fn encode_block(design: &Design, options: &PecEncodeOptions) -> Result<Vec<u
 
     let mut sec1 = Vec::with_capacity(SECTION1_LEN);
     sec1.extend_from_slice(format!("LA:{:<16}\r", options.label).as_bytes());
+    sec1.resize(32, 0x20);
+    // Corpus-invariant bytes at +32; the last two match the
+    // thumbnail geometry (6-byte stride, 38 rows).
+    sec1.extend_from_slice(&[0xFF, 0x00, THUMB_STRIDE as u8, THUMB_HEIGHT as u8]);
     sec1.resize(48, 0x20);
     sec1.push((blocks - 1) as u8);
     sec1.extend_from_slice(&palette);
@@ -445,12 +464,17 @@ pub fn encode_block(design: &Design, options: &PecEncodeOptions) -> Result<Vec<u
     let mut sec2 = Vec::with_capacity(SECTION2_LEN);
     sec2.extend_from_slice(&[0x00, 0x00]);
     sec2.extend_from_slice(&thumb_offset.to_le_bytes()[..3]);
-    sec2.extend_from_slice(&[0x00; 3]);
+    // Corpus-invariant bytes at +5..8 (12/12 blocks): 0x31, then the
+    // u16 0xF0FF.
+    sec2.push(0x31);
+    sec2.extend_from_slice(&0xF0FFu16.to_le_bytes());
     sec2.extend_from_slice(&(e.width() as u16 + 1).to_le_bytes());
     sec2.extend_from_slice(&(e.height() as u16 + 1).to_le_bytes());
-    // Observed-constant pair (480, 432) from the validation corpus.
+    // Corpus-invariant pair (480, 432) at +12.
     sec2.extend_from_slice(&480u16.to_le_bytes());
     sec2.extend_from_slice(&432u16.to_le_bytes());
+    // Real writers put a design-derived big-endian pair here whose
+    // law is unresolved; zeros are written as the auditable choice.
     sec2.extend_from_slice(&[0x00; 4]);
     debug_assert_eq!(sec2.len(), SECTION2_LEN);
 
@@ -477,6 +501,10 @@ pub fn decode_block(block: &[u8]) -> Result<PecBlock> {
     let label = String::from_utf8_lossy(&block[3..19])
         .trim_end_matches([' ', '\0'])
         .to_string();
+    let continuation = String::from_utf8_lossy(&block[20..31])
+        .trim_end_matches([' ', '\0'])
+        .to_string();
+    let label_continuation = (!continuation.is_empty()).then_some(continuation);
     let colors = block[48] as usize + 1;
     if 49 + colors > SECTION1_LEN {
         return Err(Error::invalid("PEC colour count overruns section 1"));
@@ -517,6 +545,7 @@ pub fn decode_block(block: &[u8]) -> Result<PecBlock> {
 
     Ok(PecBlock {
         label: label.clone(),
+        label_continuation,
         palette,
         width,
         height,
@@ -721,6 +750,36 @@ mod tests {
         let p = decode(&bytes).unwrap();
         assert!(p.leading_origin_pair);
         assert_eq!(p.design.counts(), d.counts());
+    }
+
+    #[test]
+    fn pinned_section_constants() {
+        let d = sample_design();
+        let block = encode_block(&d, &PecEncodeOptions::default()).unwrap();
+        // Section 1: the corpus-invariant bytes at +32, space fill
+        // around them, colour count − 1 at +48.
+        assert_eq!(&block[32..36], &[0xFF, 0x00, 0x06, 0x26]);
+        assert!(block[20..32].iter().all(|&b| b == 0x20));
+        assert!(block[36..48].iter().all(|&b| b == 0x20));
+        assert_eq!(block[48], 1);
+        // Section 2: 0x31 at +5, u16 0xF0FF at +6, (480, 432) at +12.
+        let sec2 = &block[SECTION1_LEN..STITCH_OFFSET];
+        assert_eq!(sec2[5], 0x31);
+        assert_eq!(u16::from_le_bytes([sec2[6], sec2[7]]), 0xF0FF);
+        assert_eq!(u16::from_le_bytes([sec2[12], sec2[13]]), 480);
+        assert_eq!(u16::from_le_bytes([sec2[14], sec2[15]]), 432);
+    }
+
+    #[test]
+    fn label_continuation_surfaced() {
+        let d = sample_design();
+        let mut block = encode_block(&d, &PecEncodeOptions::default()).unwrap();
+        // Short labels leave the continuation area as fill → None.
+        assert_eq!(decode_block(&block).unwrap().label_continuation, None);
+        // A long design name overflowing into +20..31 is surfaced raw.
+        block[20..31].copy_from_slice(b"x - large  ");
+        let p = decode_block(&block).unwrap();
+        assert_eq!(p.label_continuation.as_deref(), Some("x - large"));
     }
 
     #[test]

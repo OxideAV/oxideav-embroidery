@@ -2,13 +2,15 @@
 //! big-endian `.inf` colour companion.
 //!
 //! Per the workspace's staged documentation (`docs/embroidery/exp/`,
-//! Grade-A table validated against a real file): design data starts
+//! Grade-A table validated against real files): design data starts
 //! at byte 0; a normal stitch is 2 bytes (`dx`, `dy`, signed 8-bit);
 //! control records are 4 bytes — `0x80` then a code byte (odd =
 //! colour change, even = jump) then the 2-byte delta. No colours, no
-//! extents, no end marker are stored; the staged material leaves any
-//! end/trim/sequin escapes unconfirmed, so decode simply runs to end
-//! of input.
+//! extents, no end marker are stored: the corpus pins the practical
+//! escape vocabulary to `80 01` (colour change) and `80 04` (jump)
+//! only, with **no end-of-design escape** — files simply end — so
+//! decode runs to end of input and this encoder writes `80 04` for
+//! jumps.
 //!
 //! EXP ships alongside a `.inf` colour file (159-byte five-colour
 //! sample mapped field-by-field in
@@ -105,7 +107,9 @@ pub fn encode(design: &Design) -> Result<Vec<u8>> {
         match *c {
             Command::Stitch { dx, dy } => push_move(&mut out, dx, dy, None),
             Command::Jump { dx, dy } | Command::Trim { dx, dy } => {
-                push_move(&mut out, dx, dy, Some(0x02))
+                // The corpus-pinned jump escape is `80 04` (`80 02`
+                // never occurs in real files).
+                push_move(&mut out, dx, dy, Some(0x04))
             }
             Command::ColorChange { dx, dy, .. } => push_move(&mut out, dx, dy, Some(0x01)),
             Command::Stop => {
@@ -289,7 +293,8 @@ mod tests {
             ..Default::default()
         };
         let bytes = encode(&d).unwrap();
-        assert_eq!(bytes, vec![0x80, 0x02, 3, 4]);
+        // Jumps use the corpus-pinned `80 04` escape.
+        assert_eq!(bytes, vec![0x80, 0x04, 3, 4]);
     }
 
     #[test]

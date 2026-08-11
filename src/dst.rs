@@ -7,12 +7,16 @@
 //! ternary-coded bit weights (±1, ±3, ±9, ±27, ±81 per axis, so
 //! ±121 per record), and a `00 00 F3` end record.
 //!
-//! Details the staged documentation leaves unpinned (recorded here so
-//! they are auditable): the exact space-vs-zero padding of numeric
-//! header values, and the population convention for the vestigial
-//! `AX/AY/MX/MY/PD` fields. This encoder right-aligns numbers with
-//! space padding, writes `AX/AY` as the signed needle end point and
-//! leaves `MX/MY/PD` blank; the decoder treats all of these leniently.
+//! Header numeric-field conventions, corpus-pinned (8 real files, no
+//! variance): values are **space-padded and right-aligned, never
+//! zero-padded**; the `0x1A` terminator sits at offset 124 and the
+//! tail is `0x20`-filled to 512. The signed `AX/AY/MX/MY` fields
+//! carry the sign character first (`+` on zero) followed by the
+//! space-padded magnitude, and an unused `PD:` is `******`. The one
+//! deviating writer in the corpus is a documented variant (`PD:`
+//! dashes, zero-padded `MX`, negative-signed zero `AX`) that the
+//! decoder must and does accept; a reader must not assume `+` on
+//! zero.
 
 use crate::model::{Command, Design};
 use crate::{Error, Result};
@@ -117,7 +121,16 @@ fn parse_num(raw: &str) -> Option<i32> {
     if t.is_empty() {
         return None;
     }
-    t.parse::<i32>().ok()
+    // The signed fields put the sign character first and space-pad
+    // between it and the digits (`+    0`); one corpus writer also
+    // zero-pads (`+   00`) and writes negative-signed zeros
+    // (`-    0`). Accept all of these.
+    let (sign, digits) = match t.as_bytes()[0] {
+        b'+' => (1, t[1..].trim_start()),
+        b'-' => (-1, t[1..].trim_start()),
+        _ => (1, t),
+    };
+    digits.parse::<i32>().ok().map(|v| sign * v)
 }
 
 /// Parses the 512-byte ASCII header alone.
@@ -462,11 +475,14 @@ pub fn encode(design: &Design, options: &DstEncodeOptions) -> Result<Vec<u8>> {
     header.extend_from_slice(format!("-X:{:5}\r", (-e.min_x).max(0)).as_bytes());
     header.extend_from_slice(format!("+Y:{:5}\r", e.max_y.max(0)).as_bytes());
     header.extend_from_slice(format!("-Y:{:5}\r", (-e.min_y).max(0)).as_bytes());
-    header.extend_from_slice(format!("AX:{:+6}\r", end.0).as_bytes());
-    header.extend_from_slice(format!("AY:{:+6}\r", end.1).as_bytes());
-    header.extend_from_slice(format!("MX:{:6}\r", 0).as_bytes());
-    header.extend_from_slice(format!("MY:{:6}\r", 0).as_bytes());
-    header.extend_from_slice(format!("PD:{:6}\r", "").as_bytes());
+    // Signed fields: sign character first (`+` on zero), then the
+    // space-padded magnitude — the corpus-pinned standard form.
+    let signed = |v: i32| format!("{}{:5}", if v < 0 { '-' } else { '+' }, v.abs());
+    header.extend_from_slice(format!("AX:{}\r", signed(end.0)).as_bytes());
+    header.extend_from_slice(format!("AY:{}\r", signed(end.1)).as_bytes());
+    header.extend_from_slice(format!("MX:{}\r", signed(0)).as_bytes());
+    header.extend_from_slice(format!("MY:{}\r", signed(0)).as_bytes());
+    header.extend_from_slice(b"PD:******\r");
     debug_assert_eq!(header.len(), 124);
     header.push(0x1A);
     header.resize(HEADER_LEN, b' ');
@@ -566,6 +582,50 @@ mod tests {
         assert_eq!(f.header.neg_x, Some((-e.min_x).max(0)));
         assert_eq!(f.header.pos_y, Some(e.max_y.max(0)));
         assert_eq!(f.header.neg_y, Some((-e.min_y).max(0)));
+    }
+
+    #[test]
+    fn header_numeric_fields_use_pinned_padding() {
+        // Corpus-pinned forms: space-padded right-aligned counts and
+        // extents, sign-first signed fields with `+` on zero, and an
+        // unused `PD:` written as asterisks.
+        let d = Design {
+            commands: vec![
+                Command::Stitch { dx: 30, dy: 40 },
+                Command::Stitch { dx: -30, dy: -40 },
+                Command::End,
+            ],
+            ..Default::default()
+        };
+        let bytes = encode(&d, &DstEncodeOptions::default()).unwrap();
+        let text = |o: usize, len: usize| std::str::from_utf8(&bytes[o..o + len]).unwrap();
+        // Field starts: LA 0, ST 20, CO 31, +X 38, then 9 bytes per
+        // extent field and 10 per signed field.
+        assert_eq!(text(20, 11), "ST:      3\r");
+        assert_eq!(text(31, 7), "CO:  0\r");
+        assert_eq!(text(38, 9), "+X:   30\r");
+        assert_eq!(text(74, 10), "AX:+    0\r");
+        assert_eq!(text(84, 10), "AY:+    0\r");
+        assert_eq!(text(94, 10), "MX:+    0\r");
+        assert_eq!(text(104, 10), "MY:+    0\r");
+        assert_eq!(text(114, 10), "PD:******\r");
+        assert_eq!(bytes[124], 0x1A);
+        assert!(bytes[125..HEADER_LEN].iter().all(|&b| b == 0x20));
+    }
+
+    #[test]
+    fn deviating_writer_forms_accepted() {
+        // The corpus's one deviating writer zero-pads `MX:+   00`,
+        // writes a negative-signed zero `AX:-    0`, and dashes for
+        // `PD:`. All must parse.
+        assert_eq!(parse_num("+    0"), Some(0));
+        assert_eq!(parse_num("-    0"), Some(0));
+        assert_eq!(parse_num("+   00"), Some(0));
+        assert_eq!(parse_num("- 1234"), Some(-1234));
+        assert_eq!(parse_num("  647"), Some(647));
+        assert_eq!(parse_num("------"), None);
+        assert_eq!(parse_num("******"), None);
+        assert_eq!(parse_num("      "), None);
     }
 
     #[test]

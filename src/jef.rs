@@ -8,15 +8,18 @@
 //! the escape byte — `80 01` + delta pair = colour change, `80 02` +
 //! delta pair = jump, `80 10` = end of design.
 //!
-//! Two details are derived here from the staged numbers rather than
-//! stated outright by them, and are recorded as auditable choices:
+//! One detail is derived here from the staged numbers rather than
+//! stated outright by them, and is recorded as an auditable choice:
 //! the header record count equals stitches + 2×jumps + 2×colour
-//! changes + 1 (the only formula matching the validated sample), and
-//! the extents order `(|−X|, +Y, +X, |−Y|)` is the one consistent
-//! with the sample values. The second per-colour u32 array between
-//! the colour table and the stitch data (implied by the sample's
-//! stitch offset of `0x74 + 8n`) is preserved raw on decode and
-//! zero-filled on encode; its meaning is not documented.
+//! changes + 1 (the only formula matching the validated sample). The
+//! extents order `(|−X|, +Y, +X, |−Y|)` is corpus-pinned (checked
+//! against sibling DST headers on three designs). The second
+//! per-colour u32 array between the colour table and the stitch data
+//! is **uniformly 13** in every corpus file (8 files, 3 designs,
+//! 3–11 colours) with semantics unknown; it is preserved raw on
+//! decode and 13-filled on encode. The hoop code at 0x20 is a small
+//! enum tracking the design envelope — 0, 2 and 29 are the observed
+//! values.
 
 use crate::model::{Command, Design, Thread};
 use crate::{Error, Result};
@@ -287,7 +290,11 @@ pub fn encode(design: &Design, options: &JefEncodeOptions) -> Result<Vec<u8>> {
     for code in &color_table {
         out.extend_from_slice(&code.to_le_bytes());
     }
-    out.extend_from_slice(&vec![0u8; 4 * blocks]);
+    // The second per-colour array is uniformly 13 across the whole
+    // corpus (semantics unknown).
+    for _ in 0..blocks {
+        out.extend_from_slice(&13u32.to_le_bytes());
+    }
     out.extend_from_slice(&body);
     Ok(out)
 }
@@ -331,7 +338,7 @@ mod tests {
         assert_eq!(f.format_flag, 10);
         assert_eq!(f.hoop, 2);
         assert_eq!(f.color_table, vec![31, 24]);
-        assert_eq!(f.second_table, vec![0, 0]);
+        assert_eq!(f.second_table, vec![13, 13]);
         assert_eq!(f.design.commands, d.commands);
         assert_eq!(f.extra_extents, [[-1; 4]; 4]);
     }
