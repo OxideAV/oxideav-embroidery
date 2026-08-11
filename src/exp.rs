@@ -136,17 +136,23 @@ pub fn decode_inf(data: &[u8]) -> Result<Vec<Thread>> {
     let _u1 = u32be(4)?;
     let record_area = u32be(8)? as usize;
     let count = u32be(12)? as usize;
-    if 16 + record_area > data.len() {
+    // Two record-area conventions occur in the corpus: the length of
+    // the record bytes from offset 16, and the same plus the 8 bytes
+    // of the record-area and count fields themselves (i.e. counted
+    // from offset 8). Accept both.
+    if 16 + record_area != data.len() && 8 + record_area != data.len() {
         return Err(Error::UnexpectedEof {
             context: "INF record area",
         });
     }
     // Every record is at least 10 bytes, so the declared colour
-    // count is bounded by the record area — reject inconsistent
-    // headers instead of pre-allocating from an untrusted count.
-    if count > record_area / 10 {
+    // count is bounded by the record bytes actually present — reject
+    // inconsistent headers instead of pre-allocating from an
+    // untrusted count.
+    if count > (data.len() - 16) / 10 {
         return Err(Error::invalid(format!(
-            "INF colour count {count} impossible for a {record_area}-byte record area"
+            "INF colour count {count} impossible for a {}-byte record area",
+            data.len() - 16
         )));
     }
     let mut threads = Vec::with_capacity(count);

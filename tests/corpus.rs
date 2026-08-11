@@ -16,7 +16,7 @@
 
 use std::path::{Path, PathBuf};
 
-use oxideav_embroidery::{dst, exp, gl, hus, Command, Format};
+use oxideav_embroidery::{col, dst, edr, exp, gl, hus, Command, Format};
 
 fn corpus_root() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("OXIDEAV_EMBROIDERY_CORPUS") {
@@ -212,6 +212,32 @@ fn probe_and_decode_sweep() {
         let data = std::fs::read(&path).unwrap();
         let h = dst::decode_header(&data).unwrap();
         assert!(h.stitch_records.unwrap_or(0) > 0, "{}", path.display());
+    }
+}
+
+/// The `.edr` and `.col` companions of the same design carry the
+/// same RGB list, and the `.inf` sibling agrees where present.
+#[test]
+fn edr_col_inf_agree() {
+    for path in corpus_files(&["edr"]) {
+        let e = edr::decode(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(!e.is_empty(), "{}", path.display());
+        let col_sibling = path.with_extension("col");
+        if col_sibling.exists() {
+            let c = col::decode(&std::fs::read(&col_sibling).unwrap()).unwrap();
+            assert_eq!(e.len(), c.len(), "{}", path.display());
+            for (a, b) in e.iter().zip(c.iter()) {
+                assert_eq!(a.rgb, b.rgb, "{}", path.display());
+            }
+        }
+        let inf_sibling = path.with_extension("inf");
+        if inf_sibling.exists() {
+            let i = exp::decode_inf(&std::fs::read(&inf_sibling).unwrap()).unwrap();
+            assert_eq!(e.len(), i.len(), "{}", path.display());
+            for (a, b) in e.iter().zip(i.iter()) {
+                assert_eq!(a.rgb, b.rgb, "{}", path.display());
+            }
+        }
     }
 }
 

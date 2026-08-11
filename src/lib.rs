@@ -46,6 +46,7 @@
 pub mod art;
 pub mod col;
 pub mod dst;
+pub mod edr;
 pub mod exp;
 pub mod gl;
 pub mod hus;
