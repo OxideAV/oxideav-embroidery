@@ -118,8 +118,8 @@ pub fn probe(data: &[u8]) -> Option<Format> {
 }
 
 /// Probes `data` and decodes it to a [`Design`] with the detected
-/// format. HUS is recognised but returns [`Error::Unsupported`]
-/// (its stitch compression is undocumented).
+/// format. VP3 is recognised but returns [`Error::Unsupported`]
+/// (its stitch section is undocumented).
 pub fn decode(data: &[u8]) -> Result<(Format, Design)> {
     let format = probe(data).ok_or(Error::BadMagic {
         expected: "known embroidery",
@@ -132,11 +132,7 @@ pub fn decode(data: &[u8]) -> Result<(Format, Design)> {
         Format::Phb => phc::decode_phb(data)?.design,
         Format::Phx => phx::decode(data)?.design,
         Format::Jef => jef::decode(data)?.design,
-        Format::Hus | Format::Vip => {
-            return Err(Error::Unsupported {
-                what: "HUS/VIP stitch streams use a compression scheme the staged documentation does not cover",
-            });
-        }
+        Format::Hus | Format::Vip => hus::decode(data)?.design,
         Format::Vp3 => {
             return Err(Error::Unsupported {
                 what: "VP3 stitch section is not covered by the staged documentation",
