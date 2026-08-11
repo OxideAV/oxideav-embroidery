@@ -6,7 +6,7 @@
 //! interesting boundary.
 
 use oxideav_embroidery::{
-    art, col, dst, exp, hus, jef, pec, pes, phc, phx, vp3, xxx, Command, Design,
+    art, col, dst, edr, exp, gl, hus, jef, pec, pes, phc, phx, vp3, xxx, Command, Design,
 };
 
 struct Lcg(u32);
@@ -33,10 +33,15 @@ fn try_all_decoders(data: &[u8]) {
     let _ = jef::decode(data);
     let _ = hus::parse(data);
     let _ = hus::parse_vip(data);
+    let _ = hus::decode(data);
     let _ = vp3::parse(data);
     let _ = xxx::parse(data);
     let _ = col::decode(data);
+    let _ = edr::decode(data);
     let _ = art::decode_design(data);
+    // The GL decompressor sees hostile bitstreams directly; the
+    // output cap bounds allocation.
+    let _ = gl::decompress(data, 1 << 16);
 }
 
 fn valid_design() -> Design {
@@ -83,6 +88,9 @@ fn valid_encodes() -> Vec<Vec<u8>> {
         jef::encode(&d, &jef::JefEncodeOptions::default()).unwrap(),
         exp::encode_inf(&threads).unwrap(),
         col::encode(&threads).unwrap(),
+        edr::encode(&threads),
+        hus::encode(&d, &hus::HusEncodeOptions::default()).unwrap(),
+        hus::encode_vip(&d, &hus::HusEncodeOptions::default()).unwrap(),
     ]
 }
 
@@ -178,4 +186,5 @@ fn extents_saturate_instead_of_overflowing() {
     assert!(pec::encode(&d, &pec::PecEncodeOptions::default()).is_err());
     assert!(exp::encode(&d).is_err());
     assert!(jef::encode(&d, &jef::JefEncodeOptions::default()).is_err());
+    assert!(hus::encode(&d, &hus::HusEncodeOptions::default()).is_err());
 }
