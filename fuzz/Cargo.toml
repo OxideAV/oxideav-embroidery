@@ -1,0 +1,45 @@
+[package]
+name = "oxideav-embroidery-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+oxideav-embroidery = { path = ".." }
+
+[[bin]]
+name = "gl_decompress"
+path = "fuzz_targets/gl_decompress.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gl_roundtrip"
+path = "fuzz_targets/gl_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_any"
+path = "fuzz_targets/decode_any.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hus_container"
+path = "fuzz_targets/hus_container.rs"
+test = false
+doc = false
+bench = false
+
+# The fuzz harness resolves its dependencies independently of the
+# workspace the crate is vendored into.
+[workspace]
+members = ["."]
