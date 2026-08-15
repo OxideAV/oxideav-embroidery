@@ -1014,6 +1014,20 @@ mod tests {
         assert_eq!(got, expect);
     }
 
+    /// A match referencing window positions nothing has written yet.
+    /// The staged documentation does not state the window's initial
+    /// contents (no well-formed producer emits such a stream); this
+    /// implementation zero-initialises the ring, and this test pins
+    /// that choice so hostile inputs stay deterministic.
+    #[test]
+    fn match_before_history_reads_zeroed_ring() {
+        let tokens = vec![Token::Lit(0xEE), Token::Match { len: 8, dist: 500 }];
+        let packed = write_tokens(&tokens);
+        let (got, _) = decompress(&packed, 64).unwrap();
+        assert_eq!(got[0], 0xEE);
+        assert_eq!(&got[1..], &[0u8; 8]);
+    }
+
     /// The tokenizer must never emit a match reaching outside its
     /// window; decoding under the *same* window proves it (a
     /// too-far distance would wrap to the wrong ring bytes).

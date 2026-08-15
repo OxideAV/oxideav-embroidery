@@ -120,6 +120,44 @@ fn hus_vip_decode_exactly() {
     }
 }
 
+/// Every real HUS/VIP stream content survives re-compression through
+/// the match-bearing encoder bit-exactly, at the smallest and the
+/// default window level — real stitch data through the documented
+/// match layer no real producer exercises.
+#[test]
+fn hus_vip_streams_survive_match_recompression() {
+    let mut total_plain = 0usize;
+    let mut total_lz = 0usize;
+    for path in corpus_files(&["hus", "vip"]) {
+        let data = std::fs::read(&path).unwrap();
+        let file = if hus::probe(&data) {
+            hus::parse(&data).unwrap()
+        } else {
+            hus::parse_vip(&data).unwrap()
+        };
+        let n = file.stitch_count as usize;
+        for raw in [&file.attributes, &file.x_deltas, &file.y_deltas] {
+            let (plain, _) = gl::decompress(raw, n).unwrap();
+            for window in [1024usize, 16384] {
+                let lz = gl::compress_lz(&plain, window).unwrap();
+                let (again, used) = gl::decompress_with_window(&lz, window, n).unwrap();
+                assert_eq!(again, plain, "match re-compression in {}", path.display());
+                assert_eq!(used, lz.len());
+                if window == 16384 {
+                    total_plain += plain.len();
+                    total_lz += lz.len();
+                }
+            }
+        }
+    }
+    if total_plain > 0 {
+        eprintln!("match-bearing re-compression: {total_lz} of {total_plain} raw bytes");
+        // Real stitch streams are repetitive; the match layer must
+        // actually engage rather than degrade to literal blocks.
+        assert!(total_lz < total_plain / 2);
+    }
+}
+
 /// The staged docs' strongest claim: a HUS stitch stream is identical
 /// record-for-record to the sibling Melco EXP of the same design,
 /// after dropping the trim and end records EXP does not represent.
