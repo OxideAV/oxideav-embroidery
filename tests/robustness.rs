@@ -80,6 +80,10 @@ fn valid_encodes() -> Vec<Vec<u8>> {
             ..Default::default()
         },
     ];
+    // A match-bearing GL stream (the documented match/offset layer no
+    // real producer emits) as a mutation/truncation seed for the raw
+    // decompressor in `try_all_decoders`.
+    let repetitive: Vec<u8> = (0..4000u32).map(|i| (i * 7 % 97) as u8).collect();
     vec![
         dst::encode(&d, &dst::DstEncodeOptions::default()).unwrap(),
         pec::encode(&d, &pec::PecEncodeOptions::default()).unwrap(),
@@ -91,6 +95,7 @@ fn valid_encodes() -> Vec<Vec<u8>> {
         edr::encode(&threads),
         hus::encode(&d, &hus::HusEncodeOptions::default()).unwrap(),
         hus::encode_vip(&d, &hus::HusEncodeOptions::default()).unwrap(),
+        gl::compress_lz(&repetitive, 1024).unwrap(),
     ]
 }
 

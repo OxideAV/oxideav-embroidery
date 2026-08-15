@@ -1,5 +1,5 @@
-//! The ArchiveLib "GL" compressed bitstream — decoder plus a
-//! literal-only encoder.
+//! The ArchiveLib "GL" compressed bitstream — decoder plus two
+//! encoders (literal-only and match-bearing).
 //!
 //! Husqvarna Viking HUS and VIP compress their three stitch streams
 //! with the "GL" method of a mid-1990s general-purpose compression
@@ -15,12 +15,17 @@
 //! MSB-first. A stream carries no header, no magic and no length
 //! field; it ends on the end-of-stream code (510).
 //!
-//! The encoder here emits **literal-only** streams (every block codes
+//! [`compress`] emits **literal-only** streams (every block codes
 //! literals plus the final end-of-stream code, never a match) — the
 //! same shape every real HUS/VIP producer in the validation corpus
-//! emits. The staged documentation notes the match and offset rules
-//! are derived from the vendor binary but unexercised by any real
-//! stream; this decoder implements them as documented.
+//! emits, and the shape the HUS/VIP encoders keep. [`compress_lz`]
+//! additionally emits the documented match layer (length codes
+//! 256…509, the offset code, self-extending copies) over a chosen
+//! history window; the staged documentation derives those rules from
+//! the vendor binary and notes no real HUS/VIP stream exercises
+//! them, so the match-bearing encoder exists to exercise the decoder
+//! against exactly the documented rules (and for general-purpose
+//! use), not to imitate a corpus producer.
 
 use crate::{Error, Result};
 
@@ -361,6 +366,34 @@ pub fn decompress_with_window(
 /// Symbols per block. The block header's code count is 16-bit, so a
 /// block holds at most 65 535 codes; stay comfortably below.
 const BLOCK_CODES: usize = 32768;
+/// Shortest codable match (length code 256).
+const MIN_MATCH: usize = 3;
+/// Longest codable match (length code 509).
+const MAX_MATCH: usize = 256;
+
+/// One LZSS token of the pre-entropy stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Token {
+    /// A literal byte.
+    Lit(u8),
+    /// A copy of `len` bytes (3…256) whose source starts `dist + 1`
+    /// bytes before the write position (the documented distance rule),
+    /// so `dist == 0` re-reads the byte just written and self-extends.
+    Match { len: u16, dist: u16 },
+}
+
+/// Splits a match distance into (offset symbol, extra value, extra
+/// bit count) per the documented rule: symbol 0 is distance 0;
+/// symbol *j* > 0 covers distances 2^(*j*−1) … 2^*j* − 1 with
+/// *j* − 1 literal extra bits.
+fn offset_parts(dist: u16) -> (usize, u32, u32) {
+    if dist == 0 {
+        (0, 0, 0)
+    } else {
+        let j = (16 - dist.leading_zeros()) as usize;
+        (j, u32::from(dist) - (1 << (j - 1)), (j - 1) as u32)
+    }
+}
 
 /// Builds length-limited Huffman code lengths for `freq` (0 = unused).
 /// Falls back to equal-length codes if the unrestricted Huffman tree
@@ -478,22 +511,30 @@ fn literal_transmission(lengths: &[u8]) -> (usize, Vec<(u8, u32, u32)>) {
     (n, items)
 }
 
-/// Compresses `data` as a GL stream (literal-only blocks, default
-/// window semantics — literal streams are window-independent).
-pub fn compress(data: &[u8]) -> Vec<u8> {
+/// Entropy-codes a token stream as GL blocks — the shared back half
+/// of both encoders. The final block carries the end-of-stream code.
+fn write_tokens(tokens: &[Token]) -> Vec<u8> {
     let mut w = BitWriter::new();
-    let mut chunks: Vec<&[u8]> = data.chunks(BLOCK_CODES).collect();
+    let mut chunks: Vec<&[Token]> = tokens.chunks(BLOCK_CODES).collect();
     if chunks.is_empty() {
         chunks.push(&[]);
     }
     let last = chunks.len() - 1;
     for (ci, chunk) in chunks.iter().enumerate() {
         let is_last = ci == last;
-        // Literal/length code: the chunk's bytes, plus EOS on the
-        // final block.
+        // Literal/length code: literal bytes and match-length codes
+        // (256…509 = length + 253), plus EOS on the final block; the
+        // offset code over the matches' offset symbols.
         let mut lit_freq = vec![0u32; LIT_ALPHABET];
-        for &b in chunk.iter() {
-            lit_freq[b as usize] += 1;
+        let mut off_freq = vec![0u32; OFF_ALPHABET];
+        for t in chunk.iter() {
+            match *t {
+                Token::Lit(b) => lit_freq[b as usize] += 1,
+                Token::Match { len, dist } => {
+                    lit_freq[len as usize + 253] += 1;
+                    off_freq[offset_parts(dist).0] += 1;
+                }
+            }
         }
         if is_last {
             lit_freq[EOS] += 1;
@@ -509,6 +550,8 @@ pub fn compress(data: &[u8]) -> Vec<u8> {
         let small_lengths = huffman_lengths(&small_freq);
         let small_codes = codes_from_lengths(&small_lengths);
         let lit_codes = codes_from_lengths(&lit_lengths);
+        let off_lengths = huffman_lengths(&off_freq);
+        let off_codes = codes_from_lengths(&off_lengths);
 
         // Block header: code count.
         let count = chunk.len() + usize::from(is_last);
@@ -546,14 +589,42 @@ pub fn compress(data: &[u8]) -> Vec<u8> {
             }
         }
 
-        // Offset set: degenerate (no match is ever coded).
-        w.write(0, 5);
-        w.write(0, 5);
+        // Offset set: degenerate when the block codes no match (the
+        // decoder then never consults it); otherwise a plain
+        // 15-symbol length list — its reader has no forced-zero
+        // position.
+        match off_lengths.iter().rposition(|&l| l > 0) {
+            None => {
+                w.write(0, 5);
+                w.write(0, 5);
+            }
+            Some(p) => {
+                let n15 = p + 1;
+                w.write(n15 as u32, 5);
+                for &l in &off_lengths[..n15] {
+                    write_small_len(&mut w, l);
+                }
+            }
+        }
 
         // The codes themselves.
-        for &b in chunk.iter() {
-            let (code, len) = lit_codes[b as usize];
-            w.write(code, len as u32);
+        for t in chunk.iter() {
+            match *t {
+                Token::Lit(b) => {
+                    let (code, len) = lit_codes[b as usize];
+                    w.write(code, len as u32);
+                }
+                Token::Match { len: mlen, dist } => {
+                    let (code, len) = lit_codes[mlen as usize + 253];
+                    w.write(code, len as u32);
+                    let (j, extra, extra_bits) = offset_parts(dist);
+                    let (code, len) = off_codes[j];
+                    w.write(code, len as u32);
+                    if extra_bits > 0 {
+                        w.write(extra, extra_bits);
+                    }
+                }
+            }
         }
         if is_last {
             let (code, len) = lit_codes[EOS];
@@ -561,6 +632,110 @@ pub fn compress(data: &[u8]) -> Vec<u8> {
         }
     }
     w.finish()
+}
+
+/// Compresses `data` as a GL stream (literal-only blocks, default
+/// window semantics — literal streams are window-independent). This
+/// is the shape every real HUS/VIP producer emits, and the encoder
+/// the HUS/VIP writers use.
+pub fn compress(data: &[u8]) -> Vec<u8> {
+    let tokens: Vec<Token> = data.iter().map(|&b| Token::Lit(b)).collect();
+    write_tokens(&tokens)
+}
+
+/// Compresses `data` as a **match-bearing** GL stream over the given
+/// history window (1024…16384, a power of two — compressor levels
+/// 0…4; the library default is 16384).
+///
+/// The staged documentation derives the match and offset rules from
+/// the vendor binary and notes that no real HUS/VIP stream exercises
+/// them — [`compress`] therefore stays the producer-shaped encoder,
+/// while this one codes the documented match layer in full: length
+/// codes 256…509, offset symbols 0…14 with their extra bits, and
+/// distance-0 self-extending copies. A stream produced with window
+/// `w` decodes bit-exactly with any decoder window ≥ `w`
+/// ([`decompress`] uses the 16384 default, which covers every level).
+pub fn compress_lz(data: &[u8], window: usize) -> Result<Vec<u8>> {
+    if !(1024..=16384).contains(&window) || !window.is_power_of_two() {
+        return Err(Error::invalid(format!("GL window size {window}")));
+    }
+    Ok(write_tokens(&tokenize(data, window)))
+}
+
+/// Hash of the 3 bytes at `p` (caller guarantees they exist).
+fn hash3(data: &[u8], p: usize) -> usize {
+    const HASH_BITS: u32 = 15;
+    let v = (u32::from(data[p]) << 16) | (u32::from(data[p + 1]) << 8) | u32::from(data[p + 2]);
+    (v.wrapping_mul(2_654_435_761) >> (32 - HASH_BITS)) as usize
+}
+
+/// Greedy hash-chain LZSS tokenizer. Chains are walked most-recent
+/// first, so among equally long candidates the smallest distance
+/// wins; a candidate farther back than the window ends the walk
+/// (older entries are farther still).
+fn tokenize(data: &[u8], window: usize) -> Vec<Token> {
+    /// Longest hash chain walked per position (speed/ratio knob; has
+    /// no effect on correctness).
+    const CHAIN_LIMIT: usize = 128;
+    let max_dist = window - 1;
+    let mut head = vec![usize::MAX; 1 << 15];
+    let mut prev = vec![usize::MAX; data.len()];
+    let mut tokens = Vec::new();
+    let mut pos = 0usize;
+    while pos < data.len() {
+        let mut best_len = 0usize;
+        let mut best_dist = 0usize;
+        if pos + MIN_MATCH <= data.len() {
+            let mut cand = head[hash3(data, pos)];
+            let max_len = (data.len() - pos).min(MAX_MATCH);
+            let mut steps = 0usize;
+            while cand != usize::MAX && steps < CHAIN_LIMIT {
+                let dist = pos - cand - 1;
+                if dist > max_dist {
+                    break;
+                }
+                // Elementwise compare against the *input* is exact
+                // even when the match overlaps its own output: the
+                // decoder's byte-at-a-time copy reproduces exactly
+                // that sequence.
+                let mut l = 0usize;
+                while l < max_len && data[cand + l] == data[pos + l] {
+                    l += 1;
+                }
+                if l > best_len {
+                    best_len = l;
+                    best_dist = dist;
+                    if l == max_len {
+                        break;
+                    }
+                }
+                cand = prev[cand];
+                steps += 1;
+            }
+        }
+        let insert = |head: &mut [usize], prev: &mut [usize], p: usize| {
+            if p + MIN_MATCH <= data.len() {
+                let h = hash3(data, p);
+                prev[p] = head[h];
+                head[h] = p;
+            }
+        };
+        if best_len >= MIN_MATCH {
+            tokens.push(Token::Match {
+                len: best_len as u16,
+                dist: best_dist as u16,
+            });
+            for k in 0..best_len {
+                insert(&mut head, &mut prev, pos + k);
+            }
+            pos += best_len;
+        } else {
+            tokens.push(Token::Lit(data[pos]));
+            insert(&mut head, &mut prev, pos);
+            pos += 1;
+        }
+    }
+    tokens
 }
 
 /// Per-symbol `(code, length)` table for a canonical length set
@@ -660,6 +835,205 @@ mod tests {
         data.extend_from_slice(&[200u8; 100]);
         data.push(0);
         roundtrip(&data);
+    }
+
+    /// Reference expansion of a token stream — the oracle the
+    /// documented copy rule must agree with. Linear output, so the
+    /// self-extending overlap case falls out naturally.
+    fn apply_tokens(tokens: &[Token]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for t in tokens {
+            match *t {
+                Token::Lit(b) => out.push(b),
+                Token::Match { len, dist } => {
+                    for src in (out.len() - dist as usize - 1..).take(len as usize) {
+                        let b = out[src];
+                        out.push(b);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn lz_roundtrip(data: &[u8], window: usize) {
+        let packed = compress_lz(data, window).unwrap();
+        let (got, used) = decompress_with_window(&packed, window, data.len().max(16)).unwrap();
+        assert_eq!(got, data);
+        assert_eq!(used, packed.len(), "stream must end exactly on EOS");
+        // Any decoder window ≥ the compressor's decodes the same
+        // stream; the default (16384) covers every level.
+        let (dflt, _) = decompress(&packed, data.len().max(16)).unwrap();
+        assert_eq!(dflt, data);
+    }
+
+    #[test]
+    fn lz_roundtrip_every_window_level() {
+        let mut data: Vec<u8> = (0..6000u32).map(|i| (i % 7 * 37) as u8).collect();
+        data.extend_from_slice(b"a design a design a design of repeats of repeats");
+        data.extend(std::iter::repeat(0xAB).take(500));
+        for w in [1024, 2048, 4096, 8192, 16384] {
+            lz_roundtrip(&data, w);
+        }
+    }
+
+    #[test]
+    fn lz_roundtrip_edge_inputs() {
+        lz_roundtrip(&[], 1024);
+        lz_roundtrip(b"ab", 1024); // below the minimum match length
+        lz_roundtrip(b"aaa", 1024); // exactly one minimum match candidate
+        lz_roundtrip(&[0u8; 100_000], 16384); // one long self-extending run
+    }
+
+    #[test]
+    fn lz_roundtrip_seeded_random_mixtures() {
+        // Deterministic LCG mixtures of fresh bytes and spliced
+        // repeats of earlier chunks, across all five window levels.
+        let mut s = 0x1234_5678u32;
+        let mut next = move || {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            s
+        };
+        for trial in 0..15usize {
+            let len = (next() % 30_000) as usize;
+            let mut data: Vec<u8> = Vec::with_capacity(len);
+            while data.len() < len {
+                if next() % 3 == 0 && !data.is_empty() {
+                    let start = next() as usize % data.len();
+                    let n = ((next() % 300) as usize + 3).min(data.len() - start);
+                    let chunk = data[start..start + n].to_vec();
+                    data.extend_from_slice(&chunk);
+                } else {
+                    for _ in 0..(next() % 50 + 1) {
+                        data.push((next() >> 11) as u8);
+                    }
+                }
+            }
+            data.truncate(len);
+            lz_roundtrip(&data, 1024 << (trial % 5));
+        }
+    }
+
+    #[test]
+    fn lz_multi_block_with_matches() {
+        // More tokens than one block holds: an incompressible LCG
+        // head (one literal token per byte, > BLOCK_CODES of them)
+        // followed by a repetitive tail whose matches land in the
+        // continuation blocks.
+        let mut s = 0x00C8_AF5Bu32;
+        let mut data: Vec<u8> = (0..(BLOCK_CODES + 2000))
+            .map(|_| {
+                s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (s >> 17) as u8
+            })
+            .collect();
+        for _ in 0..500 {
+            data.extend_from_slice(b"needle thread needle thread");
+        }
+        lz_roundtrip(&data, 16384);
+    }
+
+    #[test]
+    fn lz_beats_literal_only_on_repetitive_data() {
+        let data: Vec<u8> = b"abcdefgh".iter().cycle().take(8192).copied().collect();
+        let lz = compress_lz(&data, 16384).unwrap();
+        let lit = compress(&data);
+        assert!(
+            lz.len() * 4 < lit.len(),
+            "match layer unused: {} vs {} bytes",
+            lz.len(),
+            lit.len()
+        );
+    }
+
+    #[test]
+    fn lz_bad_window_rejected() {
+        assert!(compress_lz(&[1, 2, 3], 512).is_err());
+        assert!(compress_lz(&[1, 2, 3], 3000).is_err());
+        assert!(compress_lz(&[1, 2, 3], 32768).is_err());
+    }
+
+    /// Every offset symbol 0…14, at both edges of its distance range,
+    /// plus the extreme match lengths (3 and 256), through the real
+    /// encoder tables and back through the decoder.
+    #[test]
+    fn every_offset_symbol_roundtrips() {
+        let mut dists: Vec<u16> = vec![0, 1];
+        for j in 2..=14u32 {
+            dists.push(1 << (j - 1)); // low edge: extra bits all zero
+            dists.push((1 << j) - 1); // high edge: extra bits all one
+        }
+        // A literal ramp long enough that every distance points at
+        // real history.
+        let mut tokens: Vec<Token> = (0..16384u32)
+            .map(|i| Token::Lit((i.wrapping_mul(131) % 251) as u8))
+            .collect();
+        for &dist in &dists {
+            tokens.push(Token::Match { len: 5, dist });
+        }
+        tokens.push(Token::Match {
+            len: 256,
+            dist: 300,
+        }); // longest code (509)
+        tokens.push(Token::Match {
+            len: 3,
+            dist: 16383,
+        }); // shortest code, farthest reach
+        let expect = apply_tokens(&tokens);
+        let packed = write_tokens(&tokens);
+        let (got, used) = decompress(&packed, expect.len()).unwrap();
+        assert_eq!(got, expect);
+        assert_eq!(used, packed.len());
+    }
+
+    /// Distance 0 with the maximum length: one literal fans out into
+    /// a 257-byte run through the self-extending copy rule.
+    #[test]
+    fn self_extending_max_length_match() {
+        let tokens = vec![Token::Lit(0x42), Token::Match { len: 256, dist: 0 }];
+        let expect = apply_tokens(&tokens);
+        assert_eq!(expect, vec![0x42; 257]);
+        let (got, _) = decompress(&write_tokens(&tokens), 300).unwrap();
+        assert_eq!(got, expect);
+    }
+
+    /// A match that reads across the ring-buffer wrap point of a
+    /// small window.
+    #[test]
+    fn ring_wraparound_match() {
+        // 2000 literals into a 1024-byte window: the ring has wrapped
+        // almost twice before a full-window-reach match is decoded.
+        let mut tokens: Vec<Token> = (0..2000u32).map(|i| Token::Lit((i % 199) as u8)).collect();
+        tokens.push(Token::Match {
+            len: 64,
+            dist: 1023,
+        });
+        let expect = apply_tokens(&tokens);
+        let packed = write_tokens(&tokens);
+        let (got, _) = decompress_with_window(&packed, 1024, expect.len()).unwrap();
+        assert_eq!(got, expect);
+    }
+
+    /// The tokenizer must never emit a match reaching outside its
+    /// window; decoding under the *same* window proves it (a
+    /// too-far distance would wrap to the wrong ring bytes).
+    #[test]
+    fn tokenizer_respects_small_window() {
+        // Repeats spaced wider than the 1024 window: matchable under
+        // 16384, out of reach under 1024.
+        let mut data = Vec::new();
+        for block in 0..8u8 {
+            data.extend_from_slice(&[block; 40]);
+            data.extend((0..1500u32).map(|i| (i % 256) as u8));
+            data.extend_from_slice(b"a far-apart repeated phrase");
+        }
+        for t in tokenize(&data, 1024) {
+            if let Token::Match { dist, .. } = t {
+                assert!((dist as usize) < 1024);
+            }
+        }
+        lz_roundtrip(&data, 1024);
+        lz_roundtrip(&data, 16384);
     }
 
     /// A hand-built stream exercising the match and offset paths the

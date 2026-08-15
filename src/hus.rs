@@ -615,6 +615,37 @@ mod tests {
     }
 
     #[test]
+    fn match_compressed_streams_decode_identically() {
+        // A hypothetical producer using the documented GL match
+        // layer: re-compress the three streams with the match-bearing
+        // encoder — the container decoder must recover the identical
+        // design from them.
+        let base = sample();
+        let mut commands = Vec::new();
+        for _ in 0..40 {
+            commands.extend_from_slice(&base.commands[..base.commands.len() - 1]);
+        }
+        commands.push(Command::End);
+        let d = Design {
+            commands,
+            ..Default::default()
+        };
+        let bytes = encode(&d, &HusEncodeOptions::default()).unwrap();
+        let plain = decode(&bytes).unwrap();
+        let mut f = plain.file.clone();
+        let n = f.stitch_count as usize;
+        let (attrs, _) = gl::decompress(&f.attributes, n).unwrap();
+        let (xs, _) = gl::decompress(&f.x_deltas, n).unwrap();
+        let (ys, _) = gl::decompress(&f.y_deltas, n).unwrap();
+        f.attributes = gl::compress_lz(&attrs, 16384).unwrap();
+        f.x_deltas = gl::compress_lz(&xs, 16384).unwrap();
+        f.y_deltas = gl::compress_lz(&ys, 16384).unwrap();
+        // The repeats guarantee the match layer actually fired.
+        assert!(f.attributes.len() < plain.file.attributes.len());
+        assert_eq!(decode_design(&f).unwrap(), plain.design);
+    }
+
+    #[test]
     fn undocumented_attribute_rejected() {
         // Rebuild a valid file with one attribute byte corrupted.
         let d = sample();
