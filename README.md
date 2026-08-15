@@ -50,7 +50,7 @@ crate (its own CI leg keeps that path green).
 | `.edr` companion | ✅ | ✅ | 4-byte RGB records closed by the `FF FF FF 00` sentinel; corpus-validated against `.col`/`.inf` siblings |
 | Janome JEF | ✅ | ✅ | Validated header, colour table, `80 01/02/10` escapes; corpus-pinned extents order and second-array value |
 | Janome PTN / JEF+ / JPX | ✅ | — | The JEF container family (format flag at 0x04: JEF/PTN = 10, JEF+/JPX = 1). PTN decodes as plain JEF; the flag-1 members decode their stitch stream with an empty colour table (colour layout unpinned) |
-| Husqvarna HUS | ✅ | ✅ | Full stitch decode + encode: three ArchiveLib GL streams ([`gl`](src/gl.rs), documented bitstream-level upstream), five corpus-validated attribute bytes, inline 8-byte label. Corpus: all streams decode to exactly the declared count, record-identical to the EXP sibling |
+| Husqvarna HUS | ✅ | ✅ | Full stitch decode + encode: three ArchiveLib GL streams ([`gl`](src/gl.rs), documented bitstream-level upstream; literal-only producer-shaped encoder plus a match-bearing `compress_lz` for the documented match layer), five corpus-validated attribute bytes, inline 8-byte label. Corpus: all streams decode to exactly the declared count, record-identical to the EXP sibling |
 | Husqvarna VIP | ✅ | ✅ | HUS's layout behind its own magic, plus the inserted UTF-16LE name record (parsed and re-encoded); compressed blocks byte-identical to the HUS sibling's, colour-table scale undocumented |
 | Husqvarna/Pfaff VP3 | ◐ | — | Signature probe + producer-string skim; stitch section undocumented |
 | Compucon/Singer XXX | ◐ | — | 256-byte header (colour count at `0x27`, corpus-validated) + raw sections; no signature so extension-gated, record vocabulary undocumented |
@@ -87,14 +87,22 @@ covers them two ways:
   `.jef` sibling, the colour companions agree RGB-for-RGB, and
   sibling formats of one design agree on extent-magnitude sets (the
   corpus contains rotated exports, so sets, not ordered pairs).
+- **Fuzzing** (`fuzz/`, libFuzzer): hostile raw GL bitstreams, a
+  structure-aware GL round-trip property over both encoders and
+  every window level, every public decode entry point plus the
+  framework demuxer, and a structured HUS/VIP container target that
+  always reaches the compressed layer.
 
+The GL match/offset/window rules — documented from the vendor binary
+but emitted by no real HUS/VIP producer — are exercised in-repo by
+the match-bearing encoder's synthesized streams (every offset symbol
+at both range edges, extreme match lengths, ring wraparound, all
+five window levels) while remaining unobserved in any real stream.
 Known unpinned details (encoder choices documented in the module
 docs, awaiting further staged material): the HUS filler bytes and
 VIP's three constant u32 fields, PEC's design-derived section-2 tail
-pair, the JEF second-array semantics, the GL match/offset rules
-(documented from the vendor binary but unexercised by any real
-stream), and everything listed under each module's "unvalidated"
-caveats.
+pair, the JEF second-array semantics, and everything listed under
+each module's "unvalidated" caveats.
 
 ## License
 

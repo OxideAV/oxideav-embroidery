@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- GL match-bearing encoder `gl::compress_lz`: greedy hash-chain LZSS
+  over a caller-chosen window (1024…16384) emitting the documented
+  match layer in full — length codes 256…509, offset symbols 0…14
+  with their extra bits, distance-0 self-extending copies. The
+  literal-only `gl::compress` stays the producer-shaped HUS/VIP
+  encoder and its output is unchanged. The decoder's match, offset
+  and ring-buffer rules — previously implemented from the staged
+  documentation but unexercised by any real stream — are now locked
+  in by round-trips over every offset symbol at both range edges,
+  the extreme match lengths, ring wraparound, all five window
+  levels, and multi-block match-bearing streams; a match-compressed
+  stream triple also decodes through the real HUS container path.
+- libFuzzer harness (`fuzz/`, its own workspace): hostile raw GL
+  bitstreams, a structure-aware GL round-trip property over both
+  encoders and every window level, all public decode entry points
+  plus the framework demuxer, and a structured HUS/VIP container
+  target that always reaches the GL layer. All four targets ran
+  bounded locally before landing with zero findings (0.2M–16M execs
+  each); a match-bearing GL stream also joined the deterministic
+  robustness suite's mutation/truncation seeds.
+
 ## [0.0.2](https://github.com/OxideAV/oxideav-embroidery/compare/v0.0.1...v0.0.2) - 2026-08-11
 
 ### Other
