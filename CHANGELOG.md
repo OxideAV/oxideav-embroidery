@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.3](https://github.com/OxideAV/oxideav-embroidery/compare/v0.0.2...v0.0.3) - 2026-08-15
+
+### Other
+
+- real-corpus match re-compression + zeroed-ring pin
+- README + CHANGELOG for the GL match-layer + fuzz arc
+- libFuzzer harness — GL bitstream, GL round-trip property, whole-crate decode, structured HUS container
+- match-bearing encoder (compress_lz) exercising the documented match/offset layer
+
 ### Added
 
 - GL match-bearing encoder `gl::compress_lz`: greedy hash-chain LZSS
