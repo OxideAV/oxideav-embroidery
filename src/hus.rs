@@ -31,7 +31,7 @@
 //! here), and the meaning of VIP's three constant u32 fields.
 
 use crate::model::{Command, Thread};
-use crate::{gl, Design, Error, Result};
+use crate::{Design, Error, Result, gl};
 
 /// The HUS magic (u32 LE at offset 0).
 pub const MAGIC: u32 = 0x00C8_AF5B;

@@ -16,7 +16,7 @@
 
 use std::path::{Path, PathBuf};
 
-use oxideav_embroidery::{col, dst, edr, exp, gl, hus, jef, Command, Format};
+use oxideav_embroidery::{Command, Format, col, dst, edr, exp, gl, hus, jef};
 
 fn corpus_root() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("OXIDEAV_EMBROIDERY_CORPUS") {

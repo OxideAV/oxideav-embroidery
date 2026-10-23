@@ -20,7 +20,7 @@ pub const SENTINEL: [u8; 4] = [0xFF, 0xFF, 0xFF, 0x00];
 /// Decodes an `.edr` colour list. The sentinel is required; records
 /// after it are rejected (no corpus file carries any).
 pub fn decode(data: &[u8]) -> Result<Vec<Thread>> {
-    if data.len() % 4 != 0 {
+    if !data.len().is_multiple_of(4) {
         return Err(Error::invalid(format!(
             "EDR length {} is not a whole number of 4-byte records",
             data.len()
@@ -28,8 +28,8 @@ pub fn decode(data: &[u8]) -> Result<Vec<Thread>> {
     }
     let mut threads = Vec::new();
     let mut seen_sentinel = false;
-    for (i, rec) in data.chunks_exact(4).enumerate() {
-        if rec == SENTINEL {
+    for (i, rec) in data.as_chunks::<4>().0.iter().enumerate() {
+        if *rec == SENTINEL {
             if 4 * (i + 1) != data.len() {
                 return Err(Error::invalid("EDR data after the sentinel"));
             }

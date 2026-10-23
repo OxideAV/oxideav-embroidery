@@ -9,7 +9,7 @@
 //! require agreement on the sewn path, the colour structure and the
 //! bounding box.
 
-use oxideav_embroidery::{dst, exp, jef, pec, pes, Command, Design, Format, Thread};
+use oxideav_embroidery::{Command, Design, Format, Thread, dst, exp, jef, pec, pes};
 
 /// A deterministic multi-colour design exercising stitches, jumps
 /// (including ones large enough to split in every format), trims and

@@ -3,10 +3,10 @@
 
 use std::io::Cursor;
 
-use oxideav_core::registry::{Decoder, ProbeData, MAX_PROBE_SCORE, PROBE_SCORE_EXTENSION};
+use oxideav_core::registry::{Decoder, MAX_PROBE_SCORE, PROBE_SCORE_EXTENSION, ProbeData};
 use oxideav_core::{Error as CoreError, Frame, MediaType, NullCodecResolver, RuntimeContext};
 use oxideav_embroidery::framework::{self, EmbroideryDecoder};
-use oxideav_embroidery::{dst, hus, pec, Command, Design, Thread};
+use oxideav_embroidery::{Command, Design, Thread, dst, hus, pec};
 
 fn sample_design() -> Design {
     Design {

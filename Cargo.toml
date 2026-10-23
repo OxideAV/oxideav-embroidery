@@ -1,8 +1,8 @@
 [package]
 name = "oxideav-embroidery"
 version = "0.0.3"
-edition = "2021"
-rust-version = "1.80"
+edition = "2024"
+rust-version = "1.95"
 license = "MIT"
 authors = ["Mark Karpeles"]
 description = "Pure-Rust machine-embroidery design formats — Tajima DST, Brother PES/PEC/PHC/PHB/PHX, Melco EXP, Janome JEF and the Husqvarna/Compucon header families, decode + encode"

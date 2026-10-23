@@ -71,7 +71,7 @@ pub struct ThreadColor {
 }
 
 macro_rules! tc {
-    ($i:expr, $c:expr, $n:expr, $hex:expr) => {
+    ($i:expr_2021, $c:expr_2021, $n:expr_2021, $hex:expr_2021) => {
         ThreadColor {
             index: $i,
             code: $c,
@@ -205,11 +205,7 @@ pub struct PecEncodeOptions {
 
 fn axis_short(b: u8) -> i32 {
     let v = (b & 0x7F) as i32;
-    if v >= 0x40 {
-        v - 0x80
-    } else {
-        v
-    }
+    if v >= 0x40 { v - 0x80 } else { v }
 }
 
 /// Per-axis decode: returns (delta, control-flag bits, bytes used).
@@ -391,11 +387,11 @@ fn render_thumbnail(design: &Design, color_block: Option<usize>, frame: bool) ->
             block += 1;
             continue;
         }
-        if let Command::Stitch { .. } = c {
-            if color_block.map_or(true, |b| b == block) {
-                let (px, py) = scale(x, y);
-                set(px, py);
-            }
+        if let Command::Stitch { .. } = c
+            && color_block.is_none_or(|b| b == block)
+        {
+            let (px, py) = scale(x, y);
+            set(px, py);
         }
     }
     img

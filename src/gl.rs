@@ -871,7 +871,7 @@ mod tests {
     fn lz_roundtrip_every_window_level() {
         let mut data: Vec<u8> = (0..6000u32).map(|i| (i % 7 * 37) as u8).collect();
         data.extend_from_slice(b"a design a design a design of repeats of repeats");
-        data.extend(std::iter::repeat(0xAB).take(500));
+        data.extend(std::iter::repeat_n(0xAB, 500));
         for w in [1024, 2048, 4096, 8192, 16384] {
             lz_roundtrip(&data, w);
         }
@@ -1077,7 +1077,7 @@ mod tests {
         let small = CodeSet::from_lengths(&small_lengths).unwrap();
 
         w.write(3, 16); // three codes in the block
-                        // 19-set: count 5, lengths 3,3,3,(2-bit zero field),3,3.
+        // 19-set: count 5, lengths 3,3,3,(2-bit zero field),3,3.
         w.write(5, 5);
         write_small_len(&mut w, 3);
         write_small_len(&mut w, 3);
@@ -1152,15 +1152,15 @@ mod tests {
         w.write(100, 9);
         encode_symbol(&mut w, &small, 4); // len 2 for 'x'
         encode_symbol(&mut w, &small, 4); // len 2 for 'y' (121)
-                                          // zeros 122..=256: 135 → sym 2, 9-bit 115.
+        // zeros 122..=256: 135 → sym 2, 9-bit 115.
         encode_symbol(&mut w, &small, 2);
         w.write(115, 9);
         encode_symbol(&mut w, &small, 4); // len 2 for 257
-                                          // zeros 258..=509: 252 → sym 2, 9-bit 232.
+        // zeros 258..=509: 252 → sym 2, 9-bit 232.
         encode_symbol(&mut w, &small, 2);
         w.write(232, 9);
         encode_symbol(&mut w, &small, 4); // len 2 for EOS
-                                          // Offset set: count 2 → lengths 0, 1.
+        // Offset set: count 2 → lengths 0, 1.
         w.write(2, 5);
         write_small_len(&mut w, 0);
         write_small_len(&mut w, 1);

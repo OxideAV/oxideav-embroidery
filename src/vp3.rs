@@ -37,20 +37,22 @@ pub fn parse(data: &[u8]) -> Result<Vp3File> {
     // the producer credit.
     if let Some(len_bytes) = data.get(5..7) {
         let len = u16::from_be_bytes([len_bytes[0], len_bytes[1]]) as usize;
-        if len % 2 == 0 {
-            if let Some(raw) = data.get(7..7 + len) {
-                let units: Vec<u16> = raw
-                    .chunks_exact(2)
-                    .map(|c| u16::from_be_bytes([c[0], c[1]]))
-                    .collect();
-                if let Ok(s) = String::from_utf16(&units) {
-                    // Accept only plausible text.
-                    if !s.is_empty()
-                        && s.chars().all(|c| !c.is_control())
-                        && s.chars().any(|c| c.is_ascii_alphabetic())
-                    {
-                        producer = Some(s);
-                    }
+        if len.is_multiple_of(2)
+            && let Some(raw) = data.get(7..7 + len)
+        {
+            let units: Vec<u16> = raw
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                .collect();
+            if let Ok(s) = String::from_utf16(&units) {
+                // Accept only plausible text.
+                if !s.is_empty()
+                    && s.chars().all(|c| !c.is_control())
+                    && s.chars().any(|c| c.is_ascii_alphabetic())
+                {
+                    producer = Some(s);
                 }
             }
         }

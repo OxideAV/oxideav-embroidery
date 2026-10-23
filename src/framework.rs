@@ -22,8 +22,8 @@ use std::collections::VecDeque;
 use std::io::Read;
 
 use oxideav_core::registry::{
-    CodecInfo, CodecRegistry, ContainerRegistry, Decoder, Demuxer, ProbeData, ProbeScore, ReadSeek,
-    MAX_PROBE_SCORE, PROBE_SCORE_EXTENSION,
+    CodecInfo, CodecRegistry, ContainerRegistry, Decoder, Demuxer, MAX_PROBE_SCORE,
+    PROBE_SCORE_EXTENSION, ProbeData, ProbeScore, ReadSeek,
 };
 use oxideav_core::vector::{
     Group, Node, Path, PathNode, Point, Rgba, Stroke, VectorFrame, ViewBox,
@@ -33,7 +33,7 @@ use oxideav_core::{
     RuntimeContext, StreamInfo, TimeBase,
 };
 
-use crate::{exp, Command, Design, Format};
+use crate::{Command, Design, Format, exp};
 
 /// The registered container and codec name.
 pub const NAME: &str = "embroidery";

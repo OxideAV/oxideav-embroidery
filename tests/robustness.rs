@@ -6,7 +6,7 @@
 //! interesting boundary.
 
 use oxideav_embroidery::{
-    art, col, dst, edr, exp, gl, hus, jef, pec, pes, phc, phx, vp3, xxx, Command, Design,
+    Command, Design, art, col, dst, edr, exp, gl, hus, jef, pec, pes, phc, phx, vp3, xxx,
 };
 
 struct Lcg(u32);
