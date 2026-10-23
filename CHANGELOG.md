@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.4](https://github.com/OxideAV/oxideav-embroidery/compare/v0.0.3...v0.0.4) - 2026-10-23
+
+### Other
+
+- edition 2024, MSRV 1.95
+
 ### Changed
 
 - edition 2024, MSRV 1.95.
