@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- `#[non_exhaustive]`: the model records `Design`, `Thread` and `Counts`; the encode options `DstEncodeOptions`, `HusEncodeOptions`, `JefEncodeOptions` and `PecEncodeOptions`; the parsed file records `DstHeader`, `DstFile`, `HusFile`, `HusDecoded`, `JefFile`, `PecBlock`, `PesFile`, `PhcFile`, `PhbFile`, `PhxFile`, `Vp3File` and `XxxFile`. Code outside the crate builds the model and option records with `Default` plus the `with_*` setters. `Extents` (a bounding box) and the palette entries `ThreadColor` / `PhxColor` are unchanged.
+- `#[doc(hidden)]`: the `gl` stream-compressor module (still `pub` for tests and fuzz).
+
+### Added
+
+- `with_*` setters for every field of `Design`, `Thread`, `DstEncodeOptions`, `HusEncodeOptions`, `JefEncodeOptions` and `PecEncodeOptions`.
+
 ## [0.0.4](https://github.com/OxideAV/oxideav-embroidery/compare/v0.0.3...v0.0.4) - 2026-10-23
 
 ### Other

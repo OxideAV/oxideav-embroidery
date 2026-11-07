@@ -54,6 +54,7 @@ impl Command {
 /// and EXP store nothing, PEC stores vendor palette indices, PHX and
 /// `.inf` companions store RGB, VP3 stores names.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Thread {
     /// Vendor palette index as stored on the wire (e.g. a Brother
     /// PEC thread-table index, a Janome or Husqvarna code).
@@ -64,6 +65,32 @@ pub struct Thread {
     pub catalog: Option<String>,
     /// Human-readable colour or thread name.
     pub name: Option<String>,
+}
+
+impl Thread {
+    /// Set `palette_index`.
+    pub fn with_palette_index(mut self, palette_index: Option<u16>) -> Self {
+        self.palette_index = palette_index;
+        self
+    }
+
+    /// Set `rgb`.
+    pub fn with_rgb(mut self, rgb: Option<[u8; 3]>) -> Self {
+        self.rgb = rgb;
+        self
+    }
+
+    /// Set `catalog`.
+    pub fn with_catalog(mut self, catalog: Option<String>) -> Self {
+        self.catalog = catalog;
+        self
+    }
+
+    /// Set `name`.
+    pub fn with_name(mut self, name: Option<String>) -> Self {
+        self.name = name;
+        self
+    }
 }
 
 /// Signed bounding box of needle positions, in 0.1 mm design units.
@@ -88,6 +115,7 @@ impl Extents {
 
 /// Aggregate command counts for a design.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct Counts {
     pub stitches: usize,
     pub jumps: usize,
@@ -96,9 +124,12 @@ pub struct Counts {
     pub stops: usize,
 }
 
+impl Counts {}
+
 /// A stitch design: the decode target and encode source for every
 /// format in this crate.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Design {
     /// The command list, in machine execution order. A well-formed
     /// design ends with [`Command::End`]; decoders append one when
@@ -111,6 +142,26 @@ pub struct Design {
     /// Design label, when the format stores one (DST `LA:`, PEC
     /// `LA:`).
     pub label: Option<String>,
+}
+
+impl Design {
+    /// Set `commands`.
+    pub fn with_commands(mut self, commands: Vec<Command>) -> Self {
+        self.commands = commands;
+        self
+    }
+
+    /// Set `threads`.
+    pub fn with_threads(mut self, threads: Vec<Thread>) -> Self {
+        self.threads = threads;
+        self
+    }
+
+    /// Set `label`.
+    pub fn with_label(mut self, label: Option<String>) -> Self {
+        self.label = label;
+        self
+    }
 }
 
 impl Design {

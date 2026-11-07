@@ -16,11 +16,14 @@ pub const MAGIC: &[u8; 5] = b"%vsm%";
 
 /// The little that can be read from a VP3 header today.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Vp3File {
     /// The producer-credit string that opens the file, when it
     /// parses cleanly as a BE-length-prefixed UTF-16BE string.
     pub producer: Option<String>,
 }
+
+impl Vp3File {}
 
 /// Returns true when `data` starts with the `%vsm%` magic.
 pub fn probe(data: &[u8]) -> bool {

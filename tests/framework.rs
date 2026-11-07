@@ -9,8 +9,8 @@ use oxideav_embroidery::framework::{self, EmbroideryDecoder};
 use oxideav_embroidery::{Command, Design, Thread, dst, hus, pec};
 
 fn sample_design() -> Design {
-    Design {
-        commands: vec![
+    Design::default()
+        .with_commands(vec![
             Command::Jump { dx: 10, dy: 10 },
             Command::Stitch { dx: 20, dy: 0 },
             Command::Stitch { dx: 0, dy: 20 },
@@ -21,19 +21,12 @@ fn sample_design() -> Design {
             },
             Command::Stitch { dx: -20, dy: -20 },
             Command::End,
-        ],
-        threads: vec![
-            Thread {
-                rgb: Some([255, 0, 0]),
-                ..Default::default()
-            },
-            Thread {
-                rgb: Some([0, 0, 255]),
-                ..Default::default()
-            },
-        ],
-        label: None,
-    }
+        ])
+        .with_threads(vec![
+            Thread::default().with_rgb(Some([255, 0, 0])),
+            Thread::default().with_rgb(Some([0, 0, 255])),
+        ])
+        .with_label(None)
 }
 
 fn registered() -> RuntimeContext {

@@ -31,6 +31,7 @@ pub const MAX_DELTA: i32 = 121;
 /// the label is redundant with the stitch data and frequently wrong
 /// in third-party files, per the staged documentation.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct DstHeader {
     /// `LA:` design label (up to 16 characters).
     pub label: String,
@@ -59,8 +60,11 @@ pub struct DstHeader {
     pub pd: Option<String>,
 }
 
+impl DstHeader {}
+
 /// A decoded DST file: the parsed header plus the stitch design.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct DstFile {
     pub header: DstHeader,
     pub design: Design,
@@ -72,8 +76,11 @@ pub struct DstFile {
     pub trailing_bytes: usize,
 }
 
+impl DstFile {}
+
 /// Encoding options.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct DstEncodeOptions {
     /// Design label for the `LA:` field (up to 16 ASCII characters).
     pub label: String,
@@ -82,6 +89,20 @@ pub struct DstEncodeOptions {
     /// run (+2+2, −4−4, +2+2) that machines recognise as a trim
     /// request. When `false`, a trim is encoded as a single jump.
     pub trim_as_jump_run: bool,
+}
+
+impl DstEncodeOptions {
+    /// Set `label`.
+    pub fn with_label(mut self, label: String) -> Self {
+        self.label = label;
+        self
+    }
+
+    /// Set `trim_as_jump_run`.
+    pub fn with_trim_as_jump_run(mut self, trim_as_jump_run: bool) -> Self {
+        self.trim_as_jump_run = trim_as_jump_run;
+        self
+    }
 }
 
 impl Default for DstEncodeOptions {

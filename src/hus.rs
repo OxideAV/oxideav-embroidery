@@ -63,6 +63,7 @@ const MAX_STITCHES: u32 = 4_000_000;
 /// A parsed HUS or VIP file: header metadata plus the raw compressed
 /// streams (the two formats share this layout).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct HusFile {
     /// Declared stitch/record count (including the end record).
     pub stitch_count: u32,
@@ -89,6 +90,8 @@ pub struct HusFile {
     pub filler: Vec<u8>,
 }
 
+impl HusFile {}
+
 impl HusFile {
     /// Threads derived from the palette (vendor indices only; the
     /// staged docs carry no Husqvarna index → colour table).
@@ -106,12 +109,15 @@ impl HusFile {
 /// A decoded HUS/VIP file: the parsed container plus the stitch
 /// design recovered from the three compressed streams.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct HusDecoded {
     /// Parsed header/container state.
     pub file: HusFile,
     /// The stitch design.
     pub design: Design,
 }
+
+impl HusDecoded {}
 
 /// Returns true when `data` starts with the HUS magic.
 pub fn probe(data: &[u8]) -> bool {
@@ -300,6 +306,7 @@ pub fn decode(data: &[u8]) -> Result<HusDecoded> {
 
 /// Encoding options shared by HUS and VIP.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct HusEncodeOptions {
     /// Design label. HUS stores up to 8 ASCII characters inline at
     /// 0x20; VIP stores the full name UTF-16LE in its inserted record
@@ -310,6 +317,20 @@ pub struct HusEncodeOptions {
     /// falling back to `0, 1, 2, …`. Note the staged docs pin no
     /// index scale, and VIP's differs from HUS's.
     pub palette: Vec<u16>,
+}
+
+impl HusEncodeOptions {
+    /// Set `label`.
+    pub fn with_label(mut self, label: String) -> Self {
+        self.label = label;
+        self
+    }
+
+    /// Set `palette`.
+    pub fn with_palette(mut self, palette: Vec<u16>) -> Self {
+        self.palette = palette;
+        self
+    }
 }
 
 /// The three per-stitch byte streams of a design, pre-compression.

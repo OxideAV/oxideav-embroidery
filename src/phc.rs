@@ -40,6 +40,7 @@ use crate::{Error, Result};
 
 /// A decoded PHC file.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PhcFile {
     /// ASCII version string (observed: `"0001"`).
     pub version: String,
@@ -66,10 +67,13 @@ pub struct PhcFile {
     pub design: Design,
 }
 
+impl PhcFile {}
+
 /// A decoded PHB file — PHC's multi-design sibling. Identical body
 /// layout shifted +36 by a second copyright string, and a design
 /// record 9 bytes longer.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PhbFile {
     /// ASCII version string (observed: `"0003"`).
     pub version: String,
@@ -104,6 +108,8 @@ pub struct PhbFile {
     /// The stitch design decoded from the embedded PEC stream.
     pub design: Design,
 }
+
+impl PhbFile {}
 
 /// Returns true when `data` starts with the `#PHC` signature.
 pub fn probe(data: &[u8]) -> bool {

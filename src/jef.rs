@@ -41,6 +41,7 @@ use crate::{Error, Result};
 
 /// A decoded JEF file.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct JefFile {
     /// Format/version flag at 0x04 (observed: 10).
     pub format_flag: u32,
@@ -62,6 +63,8 @@ pub struct JefFile {
     pub design: Design,
 }
 
+impl JefFile {}
+
 impl JefFile {
     /// The ASCII date stamp from the 0x08 area
     /// (`"20170330203029"`-style), when the writer populated it.
@@ -79,6 +82,7 @@ impl JefFile {
 
 /// Encoding options.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct JefEncodeOptions {
     /// Hoop code for the 0x20 header field (enumeration not staged;
     /// the validated sample used 2).
@@ -87,6 +91,20 @@ pub struct JefEncodeOptions {
     /// are taken from `design.threads` palette indices, falling back
     /// to `1, 2, 3, …`.
     pub color_table: Vec<u32>,
+}
+
+impl JefEncodeOptions {
+    /// Set `hoop`.
+    pub fn with_hoop(mut self, hoop: u32) -> Self {
+        self.hoop = hoop;
+        self
+    }
+
+    /// Set `color_table`.
+    pub fn with_color_table(mut self, color_table: Vec<u32>) -> Self {
+        self.color_table = color_table;
+        self
+    }
 }
 
 const HEADER_FIXED: usize = 0x74;

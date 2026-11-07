@@ -50,6 +50,7 @@ pub struct PhxColor {
 
 /// A decoded PHX file (see the module caveat: unvalidated).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PhxFile {
     /// ASCII version string (expected `"0200"`).
     pub version: String,
@@ -75,6 +76,8 @@ pub struct PhxFile {
     /// The stitch design decoded from the PEC stream.
     pub design: Design,
 }
+
+impl PhxFile {}
 
 /// Returns true when `data` starts with the `#PHX` signature.
 pub fn probe(data: &[u8]) -> bool {

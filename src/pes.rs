@@ -66,6 +66,7 @@ pub fn version_name(code: &str) -> Option<&'static str> {
 
 /// A decoded PES file.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PesFile {
     /// The 4-character version code from the signature.
     pub version_code: String,
@@ -76,6 +77,8 @@ pub struct PesFile {
     /// The embedded PEC block (stitches, palette, thumbnails).
     pub pec: PecBlock,
 }
+
+impl PesFile {}
 
 /// Returns true when `data` starts with a `#PES` signature.
 pub fn probe(data: &[u8]) -> bool {

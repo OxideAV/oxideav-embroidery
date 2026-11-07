@@ -31,6 +31,7 @@ pub const COLOR_COUNT_OFFSET: usize = 0x27;
 /// A parsed XXX file: the documented header facts plus the raw
 /// sections everything else lives in.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct XxxFile {
     /// Colour count (header byte `0x27`).
     pub color_count: u8,
@@ -41,6 +42,8 @@ pub struct XxxFile {
     /// trailing RGB area, whose boundary is undocumented).
     pub stitch_data: Vec<u8>,
 }
+
+impl XxxFile {}
 
 /// Parses an XXX file's documented structure.
 ///

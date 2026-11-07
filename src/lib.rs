@@ -20,17 +20,14 @@
 //! use oxideav_embroidery::{dst, Command, Design, Format};
 //!
 //! // Three stitches, a colour change, one more stitch.
-//! let design = Design {
-//!     commands: vec![
-//!         Command::Stitch { dx: 10, dy: 0 },
-//!         Command::Stitch { dx: 0, dy: 10 },
-//!         Command::Stitch { dx: -10, dy: 0 },
-//!         Command::ColorChange { dx: 0, dy: 0, index: None },
-//!         Command::Stitch { dx: 0, dy: -10 },
-//!         Command::End,
-//!     ],
-//!     ..Default::default()
-//! };
+//! let design = Design::default().with_commands(vec![
+//!     Command::Stitch { dx: 10, dy: 0 },
+//!     Command::Stitch { dx: 0, dy: 10 },
+//!     Command::Stitch { dx: -10, dy: 0 },
+//!     Command::ColorChange { dx: 0, dy: 0, index: None },
+//!     Command::Stitch { dx: 0, dy: -10 },
+//!     Command::End,
+//! ]);
 //!
 //! // Encode as Tajima DST …
 //! let bytes = dst::encode(&design, &dst::DstEncodeOptions::default())?;
@@ -50,6 +47,8 @@ pub mod edr;
 pub mod exp;
 #[cfg(feature = "registry")]
 pub mod framework;
+// Internal: the HUS / VIP stream compressor, reachable for tests and fuzz.
+#[doc(hidden)]
 pub mod gl;
 pub mod hus;
 pub mod jef;

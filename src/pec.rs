@@ -169,6 +169,7 @@ pub fn brother_thread(index: u8) -> Option<&'static ThreadColor> {
 
 /// A decoded PEC block.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PecBlock {
     /// `LA:` label (the 16-byte field).
     pub label: String,
@@ -192,8 +193,11 @@ pub struct PecBlock {
     pub leading_origin_pair: bool,
 }
 
+impl PecBlock {}
+
 /// Encoding options for a PEC block.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct PecEncodeOptions {
     /// `LA:` label (up to 16 ASCII characters).
     pub label: String,
@@ -201,6 +205,20 @@ pub struct PecEncodeOptions {
     /// empty, indices are taken from `design.threads` palette
     /// indices, falling back to `1, 2, 3, …`.
     pub palette: Vec<u8>,
+}
+
+impl PecEncodeOptions {
+    /// Set `label`.
+    pub fn with_label(mut self, label: String) -> Self {
+        self.label = label;
+        self
+    }
+
+    /// Set `palette`.
+    pub fn with_palette(mut self, palette: Vec<u8>) -> Self {
+        self.palette = palette;
+        self
+    }
 }
 
 fn axis_short(b: u8) -> i32 {

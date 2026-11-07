@@ -45,24 +45,14 @@ fn reference_design() -> Design {
         }
     }
     commands.push(Command::End);
-    Design {
-        commands,
-        threads: vec![
-            Thread {
-                palette_index: Some(20),
-                ..Default::default()
-            },
-            Thread {
-                palette_index: Some(5),
-                ..Default::default()
-            },
-            Thread {
-                palette_index: Some(2),
-                ..Default::default()
-            },
-        ],
-        label: None,
-    }
+    Design::default()
+        .with_commands(commands)
+        .with_threads(vec![
+            Thread::default().with_palette_index(Some(20)),
+            Thread::default().with_palette_index(Some(5)),
+            Thread::default().with_palette_index(Some(2)),
+        ])
+        .with_label(None)
 }
 
 /// The absolute positions at which a stitch is sewn — the

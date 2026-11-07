@@ -60,25 +60,18 @@ fn valid_design() -> Design {
     });
     commands.push(Command::Stitch { dx: 5, dy: 5 });
     commands.push(Command::End);
-    Design {
-        commands,
-        ..Default::default()
-    }
+    Design::default().with_commands(commands)
 }
 
 fn valid_encodes() -> Vec<Vec<u8>> {
     let d = valid_design();
     let threads = vec![
-        oxideav_embroidery::Thread {
-            palette_index: Some(1),
-            rgb: Some([0, 254, 0]),
-            ..Default::default()
-        },
-        oxideav_embroidery::Thread {
-            palette_index: Some(2),
-            rgb: Some([0, 28, 223]),
-            ..Default::default()
-        },
+        oxideav_embroidery::Thread::default()
+            .with_palette_index(Some(1))
+            .with_rgb(Some([0, 254, 0])),
+        oxideav_embroidery::Thread::default()
+            .with_palette_index(Some(2))
+            .with_rgb(Some([0, 28, 223])),
     ];
     // A match-bearing GL stream (the documented match/offset layer no
     // real producer emits) as a mutation/truncation seed for the raw
@@ -163,24 +156,21 @@ fn truncations_do_not_panic() {
 
 #[test]
 fn extents_saturate_instead_of_overflowing() {
-    let d = Design {
-        commands: vec![
-            Command::Jump {
-                dx: i32::MAX,
-                dy: i32::MAX,
-            },
-            Command::Jump {
-                dx: i32::MAX,
-                dy: i32::MAX,
-            },
-            Command::Jump {
-                dx: i32::MIN,
-                dy: i32::MIN,
-            },
-            Command::End,
-        ],
-        ..Default::default()
-    };
+    let d = Design::default().with_commands(vec![
+        Command::Jump {
+            dx: i32::MAX,
+            dy: i32::MAX,
+        },
+        Command::Jump {
+            dx: i32::MAX,
+            dy: i32::MAX,
+        },
+        Command::Jump {
+            dx: i32::MIN,
+            dy: i32::MIN,
+        },
+        Command::End,
+    ]);
     let e = d.extents();
     assert_eq!(e.max_x, i32::MAX);
     assert_eq!(e.min_x, 0);
