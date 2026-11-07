@@ -63,8 +63,6 @@ pub struct JefFile {
     pub design: Design,
 }
 
-impl JefFile {}
-
 impl JefFile {
     /// The ASCII date stamp from the 0x08 area
     /// (`"20170330203029"`-style), when the writer populated it.

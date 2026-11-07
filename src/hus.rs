@@ -90,8 +90,6 @@ pub struct HusFile {
     pub filler: Vec<u8>,
 }
 
-impl HusFile {}
-
 impl HusFile {
     /// Threads derived from the palette (vendor indices only; the
     /// staged docs carry no Husqvarna index → colour table).
@@ -116,8 +114,6 @@ pub struct HusDecoded {
     /// The stitch design.
     pub design: Design,
 }
-
-impl HusDecoded {}
 
 /// Returns true when `data` starts with the HUS magic.
 pub fn probe(data: &[u8]) -> bool {

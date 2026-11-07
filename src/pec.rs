@@ -193,8 +193,6 @@ pub struct PecBlock {
     pub leading_origin_pair: bool,
 }
 
-impl PecBlock {}
-
 /// Encoding options for a PEC block.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]

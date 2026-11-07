@@ -78,8 +78,6 @@ pub struct PesFile {
     pub pec: PecBlock,
 }
 
-impl PesFile {}
-
 /// Returns true when `data` starts with a `#PES` signature.
 pub fn probe(data: &[u8]) -> bool {
     data.len() >= 12 && &data[..4] == b"#PES"

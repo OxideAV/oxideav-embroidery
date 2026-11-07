@@ -43,8 +43,6 @@ pub struct XxxFile {
     pub stitch_data: Vec<u8>,
 }
 
-impl XxxFile {}
-
 /// Parses an XXX file's documented structure.
 ///
 /// There is no signature to verify, so this can only check the

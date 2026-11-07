@@ -23,8 +23,6 @@ pub struct Vp3File {
     pub producer: Option<String>,
 }
 
-impl Vp3File {}
-
 /// Returns true when `data` starts with the `%vsm%` magic.
 pub fn probe(data: &[u8]) -> bool {
     data.len() >= MAGIC.len() && &data[..MAGIC.len()] == MAGIC

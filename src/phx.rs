@@ -77,8 +77,6 @@ pub struct PhxFile {
     pub design: Design,
 }
 
-impl PhxFile {}
-
 /// Returns true when `data` starts with the `#PHX` signature.
 pub fn probe(data: &[u8]) -> bool {
     data.len() >= 8 && &data[..4] == b"#PHX"

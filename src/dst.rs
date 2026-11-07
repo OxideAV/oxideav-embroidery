@@ -60,8 +60,6 @@ pub struct DstHeader {
     pub pd: Option<String>,
 }
 
-impl DstHeader {}
-
 /// A decoded DST file: the parsed header plus the stitch design.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -75,8 +73,6 @@ pub struct DstFile {
     /// with the documented `(size − 512) % 3 == 1` quirk).
     pub trailing_bytes: usize,
 }
-
-impl DstFile {}
 
 /// Encoding options.
 #[derive(Debug, Clone)]

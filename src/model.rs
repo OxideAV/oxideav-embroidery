@@ -124,8 +124,6 @@ pub struct Counts {
     pub stops: usize,
 }
 
-impl Counts {}
-
 /// A stitch design: the decode target and encode source for every
 /// format in this crate.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
