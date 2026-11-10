@@ -22,10 +22,23 @@
 //! - **Thumbnails**: 1-bit images, 48×38 (6-byte stride, 228 bytes),
 //!   one master plus one per colour, MSB-first from top-left.
 //!
+//! Section-1 bytes `+31..+33` (tabulated over 132 distinct PES/PEC
+//! files): `+32 +33` = `FF 00` everywhere; `+31` is `0x20` or `0xFF`
+//! by producer and layout version — `0xFF` from PE-Design-layout
+//! writers of v5 and later, `0x20` from the v1–v4 layouts, from
+//! converters and in **every** standalone `#PEC0001` file. The
+//! decoder surfaces the three bytes raw ([`PecBlock::layout_bytes`])
+//! and validates none of them; the encoder picks `+31` from
+//! [`PecLayout`] (`0x20` unless asked otherwise, always `0x20` for a
+//! standalone `.pec` and for the `#PES0001` container). Bytes
+//! `+40..+45` are surfaced raw as well ([`PecBlock::writer_mark`]):
+//! `64 20 00 20 00` at `+40` marks PE-Design-layout writers, every
+//! other producer leaves `0x20` fill — the fill this encoder writes.
+//!
 //! Corpus-pinned section constants written by this encoder (each
 //! invariant across all 12 PEC blocks of the validation corpus):
-//! section-1 bytes `FF 00 06 26` at +32 (the last two match the
-//! 6-byte-stride × 38-row thumbnail geometry), section-2 byte `0x31`
+//! section-1 bytes `06 26` at +34 (the 6-byte-stride × 38-row
+//! thumbnail geometry), section-2 byte `0x31`
 //! at +5 and the u16 `0xF0FF` at +6, and the pair `(480, 432)` at
 //! +12.
 //!
@@ -191,6 +204,73 @@ pub struct PecBlock {
     pub design: Design,
     /// True when the stream opened with the ignorable `(0, 0)` pair.
     pub leading_origin_pair: bool,
+    /// Section-1 bytes `+31..+33`, raw: `[0x20 | 0xFF, 0xFF, 0x00]`
+    /// in every tabulated file (`+31` varies by producer/layout
+    /// version, see [`PecLayout`]). Opaque — never validated.
+    pub layout_bytes: [u8; 3],
+    /// Section-1 bytes `+40..+45`, raw. `64 20 00 20 00` at `+40`
+    /// fingerprints PE-Design-layout writers (see
+    /// [`PecBlock::has_pe_design_mark`]); other producers leave
+    /// `0x20` fill.
+    pub writer_mark: [u8; 6],
+}
+
+impl PecBlock {
+    /// True when section-1 `+40..+44` carries the `64 20 00 20 00`
+    /// run that marks a PE-Design-layout writer (as opposed to a
+    /// converter, which leaves `0x20` fill there).
+    pub fn has_pe_design_mark(&self) -> bool {
+        self.writer_mark[..5] == PE_DESIGN_MARK
+    }
+}
+
+/// Section-1 `+40..+44` run written by PE-Design-layout writers.
+pub const PE_DESIGN_MARK: [u8; 5] = [0x64, 0x20, 0x00, 0x20, 0x00];
+
+/// Which form of the section-1 `+31..+33` bytes a PEC block carries.
+///
+/// `+32 +33` are `FF 00` in both forms; `+31` is the byte that
+/// differs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum PecLayout {
+    /// `20 FF 00` — the v1–v4 PE-Design layouts, converters, and every
+    /// standalone `#PEC0001` file.
+    #[default]
+    Classic,
+    /// `FF FF 00` — PE-Design-layout writers of v5 and later.
+    V5,
+}
+
+impl PecLayout {
+    /// The `+31..+33` bytes this layout writes.
+    pub fn bytes(self) -> [u8; 3] {
+        match self {
+            PecLayout::Classic => [0x20, 0xFF, 0x00],
+            PecLayout::V5 => [0xFF, 0xFF, 0x00],
+        }
+    }
+
+    /// The layout a PE-Design-layout writer of the given 4-character
+    /// PES version code (e.g. `"0060"`) uses for its embedded block:
+    /// [`PecLayout::V5`] from `0050` on, [`PecLayout::Classic`]
+    /// before (and for unparseable codes).
+    pub fn for_pes_version(code: &str) -> Self {
+        match code.parse::<u32>() {
+            Ok(v) if v >= 50 => PecLayout::V5,
+            _ => PecLayout::Classic,
+        }
+    }
+
+    /// Classifies decoded `+31..+33` bytes; `None` for a form outside
+    /// the tabulated pair.
+    pub fn from_bytes(b: [u8; 3]) -> Option<Self> {
+        match b {
+            [0x20, 0xFF, 0x00] => Some(PecLayout::Classic),
+            [0xFF, 0xFF, 0x00] => Some(PecLayout::V5),
+            _ => None,
+        }
+    }
 }
 
 /// Encoding options for a PEC block.
@@ -203,6 +283,10 @@ pub struct PecEncodeOptions {
     /// empty, indices are taken from `design.threads` palette
     /// indices, falling back to `1, 2, 3, …`.
     pub palette: Vec<u8>,
+    /// Section-1 `+31..+33` form for [`encode_block`]. The standalone
+    /// `.pec` writer and the `#PES0001` container writer always use
+    /// [`PecLayout::Classic`], the form every such file carries.
+    pub layout: PecLayout,
 }
 
 impl PecEncodeOptions {
@@ -215,6 +299,12 @@ impl PecEncodeOptions {
     /// Set `palette`.
     pub fn with_palette(mut self, palette: Vec<u8>) -> Self {
         self.palette = palette;
+        self
+    }
+
+    /// Set `layout`.
+    pub fn with_layout(mut self, layout: PecLayout) -> Self {
+        self.layout = layout;
         self
     }
 }
@@ -462,10 +552,11 @@ pub fn encode_block(design: &Design, options: &PecEncodeOptions) -> Result<Vec<u
 
     let mut sec1 = Vec::with_capacity(SECTION1_LEN);
     sec1.extend_from_slice(format!("LA:{:<16}\r", options.label).as_bytes());
-    sec1.resize(32, 0x20);
-    // Corpus-invariant bytes at +32; the last two match the
-    // thumbnail geometry (6-byte stride, 38 rows).
-    sec1.extend_from_slice(&[0xFF, 0x00, THUMB_STRIDE as u8, THUMB_HEIGHT as u8]);
+    sec1.resize(31, 0x20);
+    // +31..+33: `20|FF`, `FF`, `00` per the chosen layout form, then
+    // the thumbnail geometry (6-byte stride, 38 rows) at +34.
+    sec1.extend_from_slice(&options.layout.bytes());
+    sec1.extend_from_slice(&[THUMB_STRIDE as u8, THUMB_HEIGHT as u8]);
     sec1.resize(48, 0x20);
     sec1.push((blocks - 1) as u8);
     sec1.extend_from_slice(&palette);
@@ -568,6 +659,10 @@ pub fn decode_block(block: &[u8]) -> Result<PecBlock> {
             label: if label.is_empty() { None } else { Some(label) },
         },
         leading_origin_pair: leading,
+        layout_bytes: [block[31], block[32], block[33]],
+        writer_mark: [
+            block[40], block[41], block[42], block[43], block[44], block[45],
+        ],
     })
 }
 
@@ -588,7 +683,8 @@ pub fn decode(data: &[u8]) -> Result<PecBlock> {
 /// Encodes a standalone `.pec` file.
 pub fn encode(design: &Design, options: &PecEncodeOptions) -> Result<Vec<u8>> {
     let mut out = MAGIC.to_vec();
-    out.extend_from_slice(&encode_block(design, options)?);
+    let options = options.clone().with_layout(PecLayout::Classic);
+    out.extend_from_slice(&encode_block(design, &options)?);
     Ok(out)
 }
 
@@ -729,6 +825,7 @@ mod tests {
         let opts = PecEncodeOptions {
             label: "BLOCK".into(),
             palette: vec![20, 5],
+            layout: PecLayout::Classic,
         };
         let block = encode_block(&d, &opts).unwrap();
         let p = decode_block(&block).unwrap();
@@ -768,18 +865,68 @@ mod tests {
     fn pinned_section_constants() {
         let d = sample_design();
         let block = encode_block(&d, &PecEncodeOptions::default()).unwrap();
-        // Section 1: the corpus-invariant bytes at +32, space fill
-        // around them, colour count − 1 at +48.
-        assert_eq!(&block[32..36], &[0xFF, 0x00, 0x06, 0x26]);
-        assert!(block[20..32].iter().all(|&b| b == 0x20));
+        // Section 1: the classic `20 FF 00` form at +31, the thumbnail
+        // geometry at +34, space fill around them (no PE-Design mark
+        // at +40), colour count − 1 at +48.
+        assert_eq!(&block[31..36], &[0x20, 0xFF, 0x00, 0x06, 0x26]);
+        assert!(block[20..31].iter().all(|&b| b == 0x20));
         assert!(block[36..48].iter().all(|&b| b == 0x20));
         assert_eq!(block[48], 1);
+        let p = decode_block(&block).unwrap();
+        assert_eq!(p.layout_bytes, [0x20, 0xFF, 0x00]);
+        assert_eq!(p.writer_mark, [0x20; 6]);
+        assert!(!p.has_pe_design_mark());
         // Section 2: 0x31 at +5, u16 0xF0FF at +6, (480, 432) at +12.
         let sec2 = &block[SECTION1_LEN..STITCH_OFFSET];
         assert_eq!(sec2[5], 0x31);
         assert_eq!(u16::from_le_bytes([sec2[6], sec2[7]]), 0xF0FF);
         assert_eq!(u16::from_le_bytes([sec2[12], sec2[13]]), 480);
         assert_eq!(u16::from_le_bytes([sec2[14], sec2[15]]), 432);
+    }
+
+    #[test]
+    fn layout_form_chosen_per_layout() {
+        let d = sample_design();
+        let v5 = PecEncodeOptions::default().with_layout(PecLayout::V5);
+        let block = encode_block(&d, &v5).unwrap();
+        assert_eq!(&block[31..34], &[0xFF, 0xFF, 0x00]);
+        let p = decode_block(&block).unwrap();
+        assert_eq!(PecLayout::from_bytes(p.layout_bytes), Some(PecLayout::V5));
+        // The two forms differ only at +31.
+        let classic = encode_block(&d, &PecEncodeOptions::default()).unwrap();
+        let diff: Vec<usize> = (0..block.len())
+            .filter(|&i| block[i] != classic[i])
+            .collect();
+        assert_eq!(diff, vec![31]);
+        // Every standalone `.pec` carries the classic form, whatever
+        // the option asks for.
+        let standalone = encode(&d, &v5).unwrap();
+        assert_eq!(&standalone[8 + 31..8 + 34], &[0x20, 0xFF, 0x00]);
+        // Version-code mapping for PE-Design-layout writers.
+        for (code, want) in [
+            ("0001", PecLayout::Classic),
+            ("0020", PecLayout::Classic),
+            ("0040", PecLayout::Classic),
+            ("0050", PecLayout::V5),
+            ("0060", PecLayout::V5),
+            ("0110", PecLayout::V5),
+            ("x", PecLayout::Classic),
+        ] {
+            assert_eq!(PecLayout::for_pes_version(code), want, "{code}");
+        }
+        assert_eq!(PecLayout::from_bytes([0x20, 0x20, 0x00]), None);
+    }
+
+    #[test]
+    fn opaque_layout_bytes_never_validated() {
+        let d = sample_design();
+        let mut block = encode_block(&d, &PecEncodeOptions::default()).unwrap();
+        block[31..34].copy_from_slice(&[0x00, 0x12, 0x34]);
+        block[40..46].copy_from_slice(&[0x64, 0x20, 0x00, 0x20, 0x00, 0xFF]);
+        let p = decode_block(&block).unwrap();
+        assert_eq!(p.layout_bytes, [0x00, 0x12, 0x34]);
+        assert!(p.has_pe_design_mark());
+        assert_eq!(p.design.counts(), d.counts());
     }
 
     #[test]

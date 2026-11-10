@@ -112,7 +112,10 @@ pub fn decode(data: &[u8]) -> Result<PesFile> {
 
 /// Encodes a container-minimal `#PES0001` file (see module docs).
 pub fn encode(design: &Design, options: &PecEncodeOptions) -> Result<Vec<u8>> {
-    let block = pec::encode_block(design, options)?;
+    // `#PES0001` is a v1 layout: its embedded block carries the
+    // classic `20 FF 00` section-1 form.
+    let options = options.clone().with_layout(pec::PecLayout::Classic);
+    let block = pec::encode_block(design, &options)?;
     let mut out = Vec::with_capacity(16 + block.len());
     out.extend_from_slice(b"#PES0001");
     out.extend_from_slice(&16u32.to_le_bytes());
