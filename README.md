@@ -40,7 +40,7 @@ crate (its own CI leg keeps that path green).
 | Format | Decode | Encode | Notes |
 | ------ | ------ | ------ | ----- |
 | Tajima DST | ✅ | ✅ | Ternary 3-byte records, 512-byte ASCII header with corpus-pinned field padding, trim-by-jump-run convention, tolerance for the deviating-writer header forms and the stray-trailing-byte variant; `decode_header` exposed alone for the tape-family siblings (Barudan DSB, ZSK DSZ) that share the header over undocumented records |
-| Brother PEC | ✅ | ✅ | Standalone `.pec` and the embedded block; short/long-form axis codec, jump/trim flags, colour changes, 48×38 1-bit thumbnails (rendered on encode), corpus-invariant section constants, label-continuation area surfaced; ships the Brother 64-entry thread table as data |
+| Brother PEC | ✅ | ✅ | Standalone `.pec` and the embedded block; short/long-form axis codec, jump/trim flags, colour changes, 48×38 1-bit thumbnails (rendered on encode), corpus-invariant section constants, label-continuation area surfaced; section-1 `+31..+33` and `+40..+45` surfaced raw (never validated), the writer picks `+31` by layout (`20 FF 00` classic — always for standalone `.pec` and `#PES0001` — or `FF FF 00` for PE-Design v5+ layouts); ships the Brother 64-entry thread table as data |
 | Brother PES | ✅ | ◐ | Decode via the embedded PEC block, design section preserved raw; all 30 recognised version codes mapped. Encode is container-minimal `#PES0001` (no vector object model — documented upstream only in implementation-derived sources this workspace does not use) |
 | Brother PHC | ✅ | — | Validated container layout; PEC stream at the structural offset (`259 + 230 × colours` at standard geometry). No encode: the 163-byte design-record core is undocumented |
 | Brother PHB | ✅ | — | PHC's multi-design sibling: second copyright string, body shifted +36, 9-byte design-record head (design count is a documented hint, not proven), PEC stream at `259 + 230 × colours + 45` |
@@ -50,10 +50,10 @@ crate (its own CI leg keeps that path green).
 | `.edr` companion | ✅ | ✅ | 4-byte RGB records closed by the `FF FF FF 00` sentinel; corpus-validated against `.col`/`.inf` siblings |
 | Janome JEF | ✅ | ✅ | Validated header, colour table, `80 01/02/10` escapes; corpus-pinned extents order and second-array value |
 | Janome PTN / JEF+ / JPX | ✅ | — | The JEF container family (format flag at 0x04: JEF/PTN = 10, JEF+/JPX = 1). PTN decodes as plain JEF; the flag-1 members decode their stitch stream with an empty colour table (colour layout unpinned) |
-| Husqvarna HUS | ✅ | ✅ | Full stitch decode + encode: three ArchiveLib GL streams ([`gl`](src/gl.rs), documented bitstream-level upstream; literal-only producer-shaped encoder plus a match-bearing `compress_lz` for the documented match layer), five corpus-validated attribute bytes, inline 8-byte label. Corpus: all streams decode to exactly the declared count, record-identical to the EXP sibling |
-| Husqvarna VIP | ✅ | ✅ | HUS's layout behind its own magic, plus the inserted UTF-16LE name record (parsed and re-encoded); compressed blocks byte-identical to the HUS sibling's, colour-table scale undocumented |
+| Husqvarna HUS | ✅ | ✅ | Full stitch decode + encode: three ArchiveLib GL streams ([`gl`](src/gl.rs), documented bitstream-level upstream; literal-only producer-shaped encoder plus a match-bearing `compress_lz` for the documented match layer), five corpus-validated attribute bytes, inline 8-byte label, both documented magics (`0x00C8AF5B` / `0x00C8FC5D`), the unused byte after end-of-stream and end-record-less streams tolerated. Corpus: all streams decode to exactly the declared count, record-identical to the EXP sibling; fixtures: 99 match-coded streams decode to every documented statistic |
+| Husqvarna VIP | ✅ | ✅ | HUS's layout behind its own magic, plus the inserted UTF-16LE name record (kept raw; the name is read from its length-prefixed tail under any head, re-encoded in the corpus layout); compressed blocks byte-identical to the HUS sibling's, colour-table scale undocumented |
 | Husqvarna/Pfaff VP3 | ◐ | — | Signature probe + producer-string skim; stitch section undocumented |
-| Compucon/Singer XXX | ◐ | — | 256-byte header (colour count at `0x27`, corpus-validated) + raw sections; no signature so extension-gated, record vocabulary undocumented |
+| Compucon/Singer XXX | ◐ | ◐ | 256-byte header (colour count at `0x27`) + the pinned palette block (escape `7F 7F 02/03 14`, 21 positional `R G B 00` slots, terminator `FF FF FF 00 01` at escape + 91, producer trailer) read and written exactly; parse → write is byte-exact. No signature so extension-gated; the stitch-record vocabulary is undocumented, so the body stays raw |
 | Bernina ART | — | — | Extension-family recognition + version-from-extension hints only; the staged material is vendor statements about contents — no structure is documented anywhere |
 
 `probe()` identifies every signature-bearing format; `decode()`
@@ -87,21 +87,34 @@ covers them two ways:
   `.jef` sibling, the colour companions agree RGB-for-RGB, and
   sibling formats of one design agree on extent-magnitude sets (the
   corpus contains rotated exports, so sets, not ordered pairs).
+- **Redistributable fixture sweep** (`tests/fixtures_2026_09.rs`,
+  skips cleanly when `docs/embroidery/fixtures-2026-09/` is absent):
+  every staged file is checked against the facts its `notes.md` table
+  states (read at runtime), then round-tripped through the writers.
+
+  | Set | Files | Checked against the notes | Pass |
+  | --- | ----: | ------------------------- | ---: |
+  | HUS / VIP (Premier+, Wilcom, Wings XP, a test set) | 33 | magic, stitch count, colours, per-stream match / literal counts, longest match, longest distance, distance-0 matches, bytes after end-of-stream, integrated extents; read → write → read identical (literal-only and match-bearing GL) | 33 / 33 |
+  | PES / PEC (PE-Design v1–v6 layouts, Premier+, Wilcom, Wings XP, converters, `#PES0070`, `#PES0110`) | 28 | version string, PEC offset, `+31..+33`, `+40..+45`, `LA:` label, colour blocks, section-2 size ≥ extents; read → write (`.pec` and `#PES0001`) → read identical; PE-Design-layout `+31` re-emitted from the version code (7 / 7) | 28 / 28 |
+  | XXX (Premier+, Wilcom, open-source writer, Wings XP paletteless, a test set, a real design) | 19 | escape form + offset, colour count, slot 0, filler run, slot 20, terminator, trailer length; parse → write byte-exact (19 / 19); writer's block from the used slots alone equals the file's (10 / 10 zero-filler files) | 19 / 19 |
+  | **Total** | **80** | | **80 / 80** |
+
 - **Fuzzing** (`fuzz/`, libFuzzer): hostile raw GL bitstreams, a
   structure-aware GL round-trip property over both encoders and
   every window level, every public decode entry point plus the
   framework demuxer, and a structured HUS/VIP container target that
   always reaches the compressed layer.
 
-The GL match/offset/window rules — documented from the vendor binary
-but emitted by no real HUS/VIP producer — are exercised in-repo by
-the match-bearing encoder's synthesized streams (every offset symbol
-at both range edges, extreme match lengths, ring wraparound, all
-five window levels) while remaining unobserved in any real stream.
+The GL match/offset/window rules are exercised in-repo by the
+match-bearing encoder's synthesized streams (every offset symbol at
+both range edges, extreme match lengths, ring wraparound, all five
+window levels) and validated on real streams by the fixture sweep
+(match lengths 3…256, distances to 956, distance-0 runs).
 Known unpinned details (encoder choices documented in the module
 docs, awaiting further staged material): the HUS filler bytes and
-VIP's three constant u32 fields, PEC's design-derived section-2 tail
-pair, the JEF second-array semantics, and everything listed under
+the VIP inserted record's head, PEC's design-derived section-2 tail
+pair and its producer-dependent width/height field (span, span + 1,
+hoop size or zero), the JEF second-array semantics, and everything listed under
 each module's "unvalidated" caveats.
 
 ## License

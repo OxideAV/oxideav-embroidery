@@ -9,9 +9,17 @@ All notable changes to this project will be documented in this file.
 - `#[non_exhaustive]`: the model records `Design`, `Thread` and `Counts`; the encode options `DstEncodeOptions`, `HusEncodeOptions`, `JefEncodeOptions` and `PecEncodeOptions`; the parsed file records `DstHeader`, `DstFile`, `HusFile`, `HusDecoded`, `JefFile`, `PecBlock`, `PesFile`, `PhcFile`, `PhbFile`, `PhxFile`, `Vp3File` and `XxxFile`. Code outside the crate builds the model and option records with `Default` plus the `with_*` setters. `Extents` (a bounding box) and the palette entries `ThreadColor` / `PhxColor` are unchanged.
 - `#[doc(hidden)]`: the `gl` stream-compressor module (still `pub` for tests and fuzz).
 
+- `xxx::parse`: `XxxFile::stitch_data` now ends at the palette escape (it used to run to end of file); the palette block and the bytes after it are parsed separately.
+- `hus::parse_vip` no longer fails on VIP inserted records whose head differs from the corpus layout; the record is kept raw and the name is read from its length-prefixed tail (`vip_name` is `None` when no tail is consistent).
+
 ### Added
 
 - `with_*` setters for every field of `Design`, `Thread`, `DstEncodeOptions`, `HusEncodeOptions`, `JefEncodeOptions` and `PecEncodeOptions`.
+- HUS: the second documented magic `0x00C8FC5D` (`hus::MAGIC_FC5D`, `HUS_MAGICS`), `HusFile::magic`, `HusEncodeOptions::magic` / `with_magic`; streams without an end-of-design record decode; `HusFile::vip_record`.
+- GL: `gl::decompress_stats` / `GlStats` (literal and match counts, longest match, longest coded distance, distance-0 matches, blocks, bytes consumed).
+- PEC: `PecBlock::layout_bytes` (`+31..+33`) and `PecBlock::writer_mark` (`+40..+45`) surfaced raw, `PecBlock::has_pe_design_mark`, `PE_DESIGN_MARK`; `PecLayout` (`Classic` = `20 FF 00`, `V5` = `FF FF 00`, `for_pes_version`, `from_bytes`) and `PecEncodeOptions::layout` / `with_layout` choosing `+31` on write (standalone `.pec` and `#PES0001` always classic).
+- XXX: the pinned 21-slot palette block — `XxxPalette`, `PaletteEscape`, `XxxFile::palette` / `trailer` / `used_slots` / `threads`, `xxx::write` (byte-exact re-serialisation) and `xxx::encode_palette_block`.
+- `tests/fixtures_2026_09.rs`: sweep over the 80 redistributable fixtures of `docs/embroidery/fixtures-2026-09/` against their `notes.md` tables, with writer round-trips (80 / 80 pass).
 
 ## [0.0.4](https://github.com/OxideAV/oxideav-embroidery/compare/v0.0.3...v0.0.4) - 2026-10-23
 
