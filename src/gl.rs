@@ -301,6 +301,47 @@ pub fn decompress_with_window(
     window: usize,
     max_out: usize,
 ) -> Result<(Vec<u8>, usize)> {
+    decompress_inner(data, window, max_out, None)
+}
+
+/// Per-stream decode statistics gathered by [`decompress_stats`]:
+/// what the stream's code mix looked like, measured on the documented
+/// symbol layer.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct GlStats {
+    /// Literal codes (0…255) decoded.
+    pub literals: usize,
+    /// Match codes (256…509) decoded.
+    pub matches: usize,
+    /// Longest match length (3…256), 0 when the stream has no match.
+    pub longest_match: usize,
+    /// Largest coded match distance (the offset-symbol value; the
+    /// copy source is `write_pos − distance − 1`).
+    pub longest_distance: usize,
+    /// Matches whose coded distance is 0 (self-extending runs).
+    pub distance_zero_matches: usize,
+    /// Blocks read (each with its own code sets).
+    pub blocks: usize,
+    /// Input bytes consumed up to and including the byte holding the
+    /// last bit of the end-of-stream code.
+    pub consumed: usize,
+}
+
+/// [`decompress`] that also reports the stream's [`GlStats`].
+pub fn decompress_stats(data: &[u8], max_out: usize) -> Result<(Vec<u8>, GlStats)> {
+    let mut stats = GlStats::default();
+    let (out, used) = decompress_inner(data, DEFAULT_WINDOW, max_out, Some(&mut stats))?;
+    stats.consumed = used;
+    Ok((out, stats))
+}
+
+fn decompress_inner(
+    data: &[u8],
+    window: usize,
+    max_out: usize,
+    mut stats: Option<&mut GlStats>,
+) -> Result<(Vec<u8>, usize)> {
     if !(1024..=16384).contains(&window) || !window.is_power_of_two() {
         return Err(Error::invalid(format!("GL window size {window}")));
     }
@@ -319,6 +360,9 @@ pub fn decompress_with_window(
         let small = read_small_set(&mut r, LEN_ALPHABET, true)?;
         let lit = read_literal_set(&mut r, &small)?;
         let off = read_small_set(&mut r, OFF_ALPHABET, false)?;
+        if let Some(st) = stats.as_deref_mut() {
+            st.blocks += 1;
+        }
         for _ in 0..block_codes {
             let sym = lit.decode(&mut r)? as usize;
             match sym {
@@ -327,6 +371,9 @@ pub fn decompress_with_window(
                         return Err(Error::invalid("GL output exceeds the caller's limit"));
                     }
                     push(&mut out, &mut ring, &mut wpos, sym as u8);
+                    if let Some(st) = stats.as_deref_mut() {
+                        st.literals += 1;
+                    }
                 }
                 EOS => return Ok((out, r.bytes_consumed())),
                 256..=509 => {
@@ -340,6 +387,14 @@ pub fn decompress_with_window(
                     } else {
                         (1usize << (j - 1)) + r.read((j - 1) as u32)? as usize
                     };
+                    if let Some(st) = stats.as_deref_mut() {
+                        st.matches += 1;
+                        st.longest_match = st.longest_match.max(len);
+                        st.longest_distance = st.longest_distance.max(distance);
+                        if distance == 0 {
+                            st.distance_zero_matches += 1;
+                        }
+                    }
                     if out.len() + len > max_out {
                         return Err(Error::invalid("GL output exceeds the caller's limit"));
                     }
@@ -988,6 +1043,29 @@ mod tests {
 
     /// Distance 0 with the maximum length: one literal fans out into
     /// a 257-byte run through the self-extending copy rule.
+    #[test]
+    fn stats_count_the_symbol_layer() {
+        // Literal-only: every output byte is a literal, no match.
+        let data: Vec<u8> = (0..300u32).map(|i| (i * 7 % 251) as u8).collect();
+        let packed = compress(&data);
+        let (out, st) = decompress_stats(&packed, data.len()).unwrap();
+        assert_eq!(out, data);
+        assert_eq!((st.literals, st.matches, st.longest_match), (300, 0, 0));
+        assert_eq!(st.consumed, packed.len());
+        assert_eq!(st.blocks, 1);
+        // A run: one literal then one self-extending distance-0 match.
+        let run = vec![0x42u8; 200];
+        let packed = compress_lz(&run, DEFAULT_WINDOW).unwrap();
+        let mut padded = packed.clone();
+        padded.push(0xC0); // one unused byte after end-of-stream
+        let (out, st) = decompress_stats(&padded, run.len()).unwrap();
+        assert_eq!(out, run);
+        assert!(st.matches >= 1 && st.distance_zero_matches >= 1);
+        assert!(st.literals < 10 && st.longest_match > 100);
+        assert_eq!(st.longest_distance, 0);
+        assert_eq!(padded.len() - st.consumed, 1);
+    }
+
     #[test]
     fn self_extending_max_length_match() {
         let tokens = vec![Token::Lit(0x42), Token::Match { len: 256, dist: 0 }];

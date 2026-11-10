@@ -2,26 +2,40 @@
 //!
 //! Per the workspace's staged documentation (`docs/embroidery/hus/`,
 //! header and stitch layer validated against 8 `.hus` and 3 `.vip`
-//! real files): a little-endian header with the magic `0x00C8AF5B`,
-//! stitch count, colour count, s16 extents, offsets to three
+//! real files, then against 33 redistributable match-coded fixtures):
+//! a little-endian header with one of the two documented HUS magics
+//! (`0x00C8AF5B` and `0x00C8FC5D` — the high half `0x00C8` is the
+//! stable part; neither value implies a literal-only writer), stitch
+//! count, colour count, s16 extents, offsets to three
 //! **separate compressed streams** (attributes, X deltas, Y deltas),
 //! an inline 8-byte ASCII design label at `0x20`, and a u16 colour
 //! table at `0x28`. Each stream is an independent ArchiveLib GL
 //! bitstream ([`crate::gl`]) that decompresses to exactly
-//! `stitch_count` bytes; stitch *i* is `(attr[i], x[i], y[i])` with
+//! `stitch_count` bytes and ends on the end-of-stream code; a block's
+//! header-delimited span may carry one unused byte after the byte
+//! holding that code, which the reader ignores. Stitch *i* is `(attr[i], x[i], y[i])` with
 //! signed 8-bit deltas.
 //!
 //! Attribute bytes (all five values corpus-validated): `0x80` stitch,
 //! `0x81` jump, `0x84` colour change, `0x88` trim, `0x90` end of
-//! design (exactly one, always last).
+//! design (at most one, always last). One producer of the staged
+//! fixture set writes HUS streams with **no** end-of-design record
+//! (its VIP siblings carry one); the decoder accepts that and the
+//! design then simply has no [`Command::End`]. The encoder always
+//! closes the streams with the end record.
 //!
 //! **VIP** shares the layout field for field with two differences:
 //! its magic (`0x0190FC5D`), and an inserted record between the
 //! colour table and the block area (replacing HUS's two filler
-//! bytes): a 12-byte constant signature, three u32 fields equal to 1,
-//! a u32 length in UTF-16 code units, and the design name in
-//! UTF-16LE. The header's stream offsets already account for it; a
-//! reader must take the offsets from the header. VIP's compressed
+//! bytes). In the validation corpus the record is a 12-byte constant
+//! signature, three u32 fields equal to 1, a u32 length in UTF-16 code
+//! units, and the design name in UTF-16LE; other producers write a
+//! longer head before the same length-prefixed name. The reader keeps
+//! the whole record raw ([`HusFile::vip_record`]) and takes the name
+//! from the record's tail (the u32 length directly followed by that
+//! many UTF-16LE units, the last one NUL). The header's stream offsets
+//! already account for the record; a reader must take the offsets
+//! from the header. VIP's compressed
 //! blocks are byte-identical to its `.hus` sibling's; its colour
 //! table is on a different (undocumented) scale from HUS's.
 //!
@@ -33,8 +47,15 @@
 use crate::model::{Command, Thread};
 use crate::{Design, Error, Result, gl};
 
-/// The HUS magic (u32 LE at offset 0).
+/// The HUS magic (u32 LE at offset 0) the encoder writes by default.
 pub const MAGIC: u32 = 0x00C8_AF5B;
+
+/// The second documented HUS magic, written by several producers of
+/// match-coded streams.
+pub const MAGIC_FC5D: u32 = 0x00C8_FC5D;
+
+/// Every documented HUS magic.
+pub const HUS_MAGICS: [u32; 2] = [MAGIC, MAGIC_FC5D];
 
 /// The VIP magic (u32 LE at offset 0).
 pub const VIP_MAGIC: u32 = 0x0190_FC5D;
@@ -65,6 +86,9 @@ const MAX_STITCHES: u32 = 4_000_000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct HusFile {
+    /// The magic the file carries (one of [`HUS_MAGICS`], or
+    /// [`VIP_MAGIC`]).
+    pub magic: u32,
     /// Declared stitch/record count (including the end record).
     pub stitch_count: u32,
     /// Extents: (+X, +Y, −X, −Y) as stored, 0.1 mm.
@@ -76,8 +100,13 @@ pub struct HusFile {
     /// it). `None` when all-zero.
     pub label: Option<String>,
     /// The UTF-16LE design name from VIP's inserted record. `None`
-    /// for HUS.
+    /// for HUS, and for a VIP record whose tail is not a
+    /// length-prefixed NUL-terminated name.
     pub vip_name: Option<String>,
+    /// VIP: the raw inserted record between the colour table and the
+    /// first stream (its head is only partly documented). Empty for
+    /// HUS.
+    pub vip_record: Vec<u8>,
     /// Raw compressed attribute (command) stream.
     pub attributes: Vec<u8>,
     /// Raw compressed X-delta stream.
@@ -115,9 +144,10 @@ pub struct HusDecoded {
     pub design: Design,
 }
 
-/// Returns true when `data` starts with the HUS magic.
+/// Returns true when `data` starts with a documented HUS magic.
 pub fn probe(data: &[u8]) -> bool {
-    data.len() >= 4 && u32::from_le_bytes([data[0], data[1], data[2], data[3]]) == MAGIC
+    data.len() >= 4
+        && HUS_MAGICS.contains(&u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
 }
 
 /// Returns true when `data` starts with the VIP magic.
@@ -127,7 +157,7 @@ pub fn probe_vip(data: &[u8]) -> bool {
 
 /// Parses a HUS header and splits out the raw compressed streams.
 pub fn parse(data: &[u8]) -> Result<HusFile> {
-    parse_with_magic(data, MAGIC, "HUS")
+    parse_with_magic(data, &HUS_MAGICS, "HUS")
 }
 
 /// Parses a VIP header and splits out the raw compressed streams.
@@ -135,16 +165,17 @@ pub fn parse(data: &[u8]) -> Result<HusFile> {
 /// for VIP's inserted name record, which is parsed into
 /// [`HusFile::vip_name`].
 pub fn parse_vip(data: &[u8]) -> Result<HusFile> {
-    parse_with_magic(data, VIP_MAGIC, "VIP")
+    parse_with_magic(data, &[VIP_MAGIC], "VIP")
 }
 
-fn parse_with_magic(data: &[u8], magic: u32, name: &'static str) -> Result<HusFile> {
+fn parse_with_magic(data: &[u8], magics: &[u32], name: &'static str) -> Result<HusFile> {
     if data.len() < 0x28 {
         return Err(Error::UnexpectedEof { context: name });
     }
     let u32le = |o: usize| u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]);
     let s16 = |o: usize| i16::from_le_bytes([data[o], data[o + 1]]);
-    if u32le(0) != magic {
+    let magic = u32le(0);
+    if !magics.contains(&magic) {
         return Err(Error::BadMagic { expected: name });
     }
     let stitch_count = u32le(4);
@@ -179,17 +210,19 @@ fn parse_with_magic(data: &[u8], magic: u32, name: &'static str) -> Result<HusFi
         )));
     }
     let gap = &data[table_end..attr_off];
-    let (vip_name, filler) = if magic == VIP_MAGIC {
-        (Some(parse_vip_record(gap)?), Vec::new())
+    let (vip_name, vip_record, filler) = if magic == VIP_MAGIC {
+        (vip_record_name(gap), gap.to_vec(), Vec::new())
     } else {
-        (None, gap.to_vec())
+        (None, Vec::new(), gap.to_vec())
     };
     Ok(HusFile {
+        magic,
         stitch_count,
         extents,
         palette,
         label,
         vip_name,
+        vip_record,
         attributes: data[attr_off..x_off].to_vec(),
         x_deltas: data[x_off..y_off].to_vec(),
         y_deltas: data[y_off..].to_vec(),
@@ -197,28 +230,40 @@ fn parse_with_magic(data: &[u8], magic: u32, name: &'static str) -> Result<HusFi
     })
 }
 
-/// Parses VIP's inserted record: 12-byte signature, three u32 fields
-/// (1 in every corpus file, meaning undocumented), a u32 length in
-/// UTF-16 code units including the terminator, and the UTF-16LE
-/// design name.
-fn parse_vip_record(gap: &[u8]) -> Result<String> {
-    if gap.len() < 28 {
-        return Err(Error::UnexpectedEof {
-            context: "VIP inserted record",
-        });
+/// Reads the design name from VIP's inserted record. The record ends
+/// with a u32 length in UTF-16 code units (terminator included)
+/// followed by that many UTF-16LE units, the last one NUL. The
+/// corpus layout puts the length at record offset 24; when that does
+/// not fit, the shortest self-consistent length-prefixed tail is
+/// taken. `None` when no tail is consistent.
+fn vip_record_name(gap: &[u8]) -> Option<String> {
+    let u32_at = |o: usize| u32::from_le_bytes([gap[o], gap[o + 1], gap[o + 2], gap[o + 3]]);
+    let name_at = |start: usize, len: usize| -> Option<String> {
+        let units: Vec<u16> = (0..len)
+            .map(|i| u16::from_le_bytes([gap[start + 2 * i], gap[start + 2 * i + 1]]))
+            .collect();
+        let (last, body) = units.split_last()?;
+        (*last == 0 && !body.contains(&0)).then(|| String::from_utf16_lossy(body))
+    };
+    // The corpus layout: 12-byte signature, three u32, then the length.
+    if gap.len() >= 28 {
+        let len = u32_at(24) as usize;
+        if len >= 1
+            && 28 + 2 * len == gap.len()
+            && let Some(n) = name_at(28, len)
+        {
+            return Some(n);
+        }
     }
-    let len = u32::from_le_bytes([gap[24], gap[25], gap[26], gap[27]]) as usize;
-    if 28 + 2 * len != gap.len() {
-        return Err(Error::invalid(format!(
-            "VIP name length {len} inconsistent with a {}-byte record area",
-            gap.len()
-        )));
-    }
-    let units: Vec<u16> = (0..len)
-        .map(|i| u16::from_le_bytes([gap[28 + 2 * i], gap[28 + 2 * i + 1]]))
-        .collect();
-    let end = units.iter().position(|&u| u == 0).unwrap_or(units.len());
-    Ok(String::from_utf16_lossy(&units[..end]))
+    // Any other head: the length-prefixed name is the record's tail.
+    (1..)
+        .take_while(|&len| 4 + 2 * len <= gap.len())
+        .find_map(|len| {
+            let off = gap.len() - 2 * len - 4;
+            (u32_at(off) as usize == len)
+                .then(|| name_at(off + 4, len))
+                .flatten()
+        })
 }
 
 /// Decompresses the three streams and rebuilds the stitch design.
@@ -313,6 +358,9 @@ pub struct HusEncodeOptions {
     /// falling back to `0, 1, 2, …`. Note the staged docs pin no
     /// index scale, and VIP's differs from HUS's.
     pub palette: Vec<u16>,
+    /// HUS magic to write (one of [`HUS_MAGICS`]); `None` writes
+    /// [`MAGIC`]. Ignored by [`encode_vip`], whose magic is fixed.
+    pub magic: Option<u32>,
 }
 
 impl HusEncodeOptions {
@@ -325,6 +373,12 @@ impl HusEncodeOptions {
     /// Set `palette`.
     pub fn with_palette(mut self, palette: Vec<u16>) -> Self {
         self.palette = palette;
+        self
+    }
+
+    /// Set `magic`.
+    pub fn with_magic(mut self, magic: Option<u32>) -> Self {
+        self.magic = magic;
         self
     }
 }
@@ -422,6 +476,17 @@ fn palette_for(design: &Design, options: &HusEncodeOptions) -> Result<Vec<u16>> 
 
 fn encode_with(design: &Design, options: &HusEncodeOptions, vip: bool) -> Result<Vec<u8>> {
     let palette = palette_for(design, options)?;
+    let magic = if vip {
+        VIP_MAGIC
+    } else {
+        let m = options.magic.unwrap_or(MAGIC);
+        if !HUS_MAGICS.contains(&m) {
+            return Err(Error::OutOfRange {
+                field: "HUS magic (must be a documented value)",
+            });
+        }
+        m
+    };
     let (attrs, xs, ys) = build_streams(design)?;
     let e = design.extents();
     for v in [e.max_x, e.max_y, e.min_x, e.min_y] {
@@ -462,7 +527,7 @@ fn encode_with(design: &Design, options: &HusEncodeOptions, vip: bool) -> Result
 
     let attr_off = 0x28 + 2 * palette.len() + inserted.len();
     let mut out = Vec::with_capacity(attr_off + ca.len() + cx.len() + cy.len());
-    out.extend_from_slice(&if vip { VIP_MAGIC } else { MAGIC }.to_le_bytes());
+    out.extend_from_slice(&magic.to_le_bytes());
     out.extend_from_slice(&(attrs.len() as u32).to_le_bytes());
     out.extend_from_slice(&(palette.len() as u32).to_le_bytes());
     for v in [e.max_x, e.max_y, e.min_x, e.min_y] {
@@ -532,6 +597,7 @@ mod tests {
             &HusEncodeOptions {
                 label: "TESTLBL".into(),
                 palette: vec![0, 26],
+                magic: None,
             },
         )
         .unwrap();
@@ -541,6 +607,7 @@ mod tests {
         assert_eq!(got.file.palette, vec![0, 26]);
         assert_eq!(got.file.label.as_deref(), Some("TESTLBL"));
         assert_eq!(got.file.vip_name, None);
+        assert!(got.file.vip_record.is_empty());
         assert_eq!(got.file.filler, vec![0, 0]);
         // The oversized jump splits into three; everything else is
         // preserved verbatim (colour change / trim carry (0,0)).
@@ -573,6 +640,7 @@ mod tests {
             &HusEncodeOptions {
                 label: "a design name longer than eight chars".into(),
                 palette: vec![0, 70],
+                magic: None,
             },
         )
         .unwrap();
@@ -596,6 +664,7 @@ mod tests {
         let opts = HusEncodeOptions {
             label: "twin".into(),
             palette: vec![1, 2],
+            magic: None,
         };
         let h = parse(&encode(&d, &opts).unwrap()).unwrap();
         let v = parse_vip(&encode_vip(&d, &opts).unwrap()).unwrap();
@@ -604,6 +673,95 @@ mod tests {
         assert_eq!(h.y_deltas, v.y_deltas);
         assert_eq!(h.stitch_count, v.stitch_count);
         assert_eq!(h.extents, v.extents);
+    }
+
+    #[test]
+    fn second_documented_magic_roundtrips() {
+        let d = sample();
+        let opts = HusEncodeOptions::default().with_magic(Some(MAGIC_FC5D));
+        let bytes = encode(&d, &opts).unwrap();
+        assert_eq!(&bytes[..4], &[0x5D, 0xFC, 0xC8, 0x00]);
+        assert!(probe(&bytes));
+        assert!(!probe_vip(&bytes));
+        let got = decode(&bytes).unwrap();
+        assert_eq!(got.file.magic, MAGIC_FC5D);
+        let plain = decode(&encode(&d, &HusEncodeOptions::default()).unwrap()).unwrap();
+        assert_eq!(plain.file.magic, MAGIC);
+        assert_eq!(got.design, plain.design);
+        // Only documented values are writable.
+        let bad = HusEncodeOptions::default().with_magic(Some(0x00C8_0000));
+        assert!(matches!(encode(&d, &bad), Err(Error::OutOfRange { .. })));
+        // VIP's magic is fixed whatever the option says.
+        let v = encode_vip(&d, &opts).unwrap();
+        assert!(probe_vip(&v));
+    }
+
+    #[test]
+    fn one_unused_byte_after_end_of_stream_tolerated() {
+        // A block's span may extend one byte past the byte holding the
+        // end-of-stream code; the reader stops on the code.
+        let d = sample();
+        let bytes = encode(&d, &HusEncodeOptions::default()).unwrap();
+        let mut f = parse(&bytes).unwrap();
+        for pad in [0x00u8, 0x80, 0xC0] {
+            let mut g = f.clone();
+            g.attributes.push(pad);
+            g.x_deltas.push(pad);
+            g.y_deltas.push(pad);
+            assert_eq!(decode_design(&g).unwrap(), decode_design(&f).unwrap());
+        }
+        f.attributes.clear();
+        assert!(decode_design(&f).is_err());
+    }
+
+    #[test]
+    fn vip_name_read_from_record_tail_under_a_longer_head() {
+        // A producer writing a longer head (here 6 + 2 × 10 opaque
+        // bytes and ten u32 fields) before the same length-prefixed
+        // name: the name is still found at the record's tail.
+        let mut rec = vec![0xA5u8; 26];
+        for _ in 0..10 {
+            rec.extend_from_slice(&1u32.to_le_bytes());
+        }
+        let name: Vec<u16> = "random1-wilcom".encode_utf16().chain([0]).collect();
+        rec.extend_from_slice(&(name.len() as u32).to_le_bytes());
+        for u in &name {
+            rec.extend_from_slice(&u.to_le_bytes());
+        }
+        assert_eq!(vip_record_name(&rec).as_deref(), Some("random1-wilcom"));
+        // An empty name (length 1, just the terminator).
+        let mut empty = vec![0x5Au8; 26];
+        for _ in 0..10 {
+            empty.extend_from_slice(&1u32.to_le_bytes());
+        }
+        empty.extend_from_slice(&1u32.to_le_bytes());
+        empty.extend_from_slice(&[0, 0]);
+        assert_eq!(vip_record_name(&empty).as_deref(), Some(""));
+        // No consistent tail → no name (and no error).
+        assert_eq!(vip_record_name(&[0xFF; 40]), None);
+        assert_eq!(vip_record_name(&[]), None);
+    }
+
+    #[test]
+    fn hus_without_end_record_decodes() {
+        // Re-pack a valid file's streams without the closing 0x90.
+        let d = sample();
+        let bytes = encode(&d, &HusEncodeOptions::default()).unwrap();
+        let mut f = parse(&bytes).unwrap();
+        let n = f.stitch_count as usize;
+        let cut = |raw: &mut Vec<u8>| {
+            let (mut plain, _) = gl::decompress(raw, n).unwrap();
+            plain.pop();
+            *raw = gl::compress(&plain);
+        };
+        cut(&mut f.attributes);
+        cut(&mut f.x_deltas);
+        cut(&mut f.y_deltas);
+        f.stitch_count -= 1;
+        let got = decode_design(&f).unwrap();
+        let full = decode_design(&parse(&bytes).unwrap()).unwrap();
+        assert_eq!(got.commands[..], full.commands[..full.commands.len() - 1]);
+        assert!(!matches!(got.commands.last(), Some(Command::End)));
     }
 
     #[test]
