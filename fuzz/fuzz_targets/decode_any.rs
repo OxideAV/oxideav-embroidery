@@ -25,7 +25,10 @@ fuzz_target!(|data: &[u8]| {
     let _ = hus::parse_vip(data);
     let _ = hus::decode(data);
     let _ = vp3::parse(data);
-    let _ = xxx::parse(data);
+    // XXX re-serialisation is lossless for anything that parses.
+    if let Ok(f) = xxx::parse(data) {
+        assert_eq!(xxx::write(&f).unwrap(), data);
+    }
     let _ = col::decode(data);
     let _ = edr::decode(data);
     let _ = art::decode_design(data);
