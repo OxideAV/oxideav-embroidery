@@ -186,8 +186,9 @@ pub fn decode(data: &[u8]) -> Result<JefFile> {
         }
     };
 
-    let mut commands = Vec::new();
     let body = &data[stitch_offset..];
+    // A record is at least two bytes.
+    let mut commands = Vec::with_capacity(body.len() / 2 + 1);
     let mut i = 0usize;
     let mut terminated = false;
     while i + 2 <= body.len() {
@@ -328,7 +329,7 @@ pub fn encode(design: &Design, options: &JefEncodeOptions) -> Result<Vec<u8>> {
         });
     }
 
-    let mut body = Vec::new();
+    let mut body = Vec::with_capacity(2 * design.commands.len() + 2);
     let mut records = 0usize;
     for c in &design.commands {
         match *c {

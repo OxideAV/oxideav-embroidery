@@ -386,9 +386,10 @@ impl HusEncodeOptions {
 
 /// The three per-stitch byte streams of a design, pre-compression.
 fn build_streams(design: &Design) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
-    let mut attrs = Vec::new();
-    let mut xs = Vec::new();
-    let mut ys = Vec::new();
+    let n = design.commands.len() + 1;
+    let mut attrs = Vec::with_capacity(n);
+    let mut xs = Vec::with_capacity(n);
+    let mut ys = Vec::with_capacity(n);
     let mut push = |attr: u8, dx: i32, dy: i32| {
         attrs.push(attr);
         xs.push((dx as i8) as u8);

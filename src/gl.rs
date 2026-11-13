@@ -79,6 +79,29 @@ impl<'a> BitReader<'a> {
         Ok(v)
     }
 
+    /// The next 16 bits MSB-first without consuming them, zero-filled
+    /// past the end of input, plus how many of them are real.
+    #[inline]
+    fn peek16(&mut self) -> (u32, u32) {
+        while self.nbits < 16 {
+            let Some(&b) = self.data.get(self.pos) else {
+                let v = (self.acc << (16 - self.nbits)) as u32 & 0xFFFF;
+                return (v, self.nbits);
+            };
+            self.pos += 1;
+            self.acc = (self.acc << 8) | b as u64;
+            self.nbits += 8;
+        }
+        ((self.acc >> (self.nbits - 16)) as u32 & 0xFFFF, 16)
+    }
+
+    /// Consumes `n` bits a preceding [`Self::peek16`] reported real.
+    #[inline]
+    fn skip(&mut self, n: u32) {
+        debug_assert!(n <= self.nbits);
+        self.nbits -= n;
+    }
+
     /// Bytes of input consumed so far (partially-read bytes count).
     fn bytes_consumed(&self) -> usize {
         self.pos - (self.nbits / 8) as usize
@@ -139,20 +162,34 @@ struct Canonical {
     count: [u32; MAX_CODE_LEN as usize + 1],
     /// Symbols ordered by (length, symbol) — canonical order.
     symbols: Vec<u16>,
+    /// Direct lookup on the next `prefix_bits` stream bits: entry
+    /// `(symbol << 4) | (length − 1)` for every bit pattern that
+    /// starts with a code of at most `prefix_bits` bits, [`NO_ENTRY`]
+    /// otherwise (a longer code, or no code at all).
+    prefix: Vec<u16>,
+    prefix_bits: u32,
 }
+
+/// Widest direct-lookup index; longer codes take the per-length walk.
+const PREFIX_BITS_MAX: u32 = 10;
+/// Marks a lookup pattern no short code starts.
+const NO_ENTRY: u16 = u16::MAX;
 
 impl CodeSet {
     /// Builds the canonical code from per-symbol lengths (0 = unused).
     /// Canonical assignment: shortest length first, increasing symbol
     /// order within each length, MSB-first.
     fn from_lengths(lengths: &[u8]) -> Result<CodeSet> {
+        debug_assert!(lengths.len() < (NO_ENTRY >> 4) as usize);
         let mut count = [0u32; MAX_CODE_LEN as usize + 1];
+        let mut longest = 0u32;
         for &l in lengths {
             if l > MAX_CODE_LEN {
                 return Err(Error::invalid(format!("GL code length {l} too long")));
             }
             if l > 0 {
                 count[l as usize] += 1;
+                longest = longest.max(l as u32);
             }
         }
         let mut first_code = [0u32; MAX_CODE_LEN as usize + 1];
@@ -177,26 +214,65 @@ impl CodeSet {
                 next[l as usize] += 1;
             }
         }
+        // Every code of length l ≤ prefix_bits owns the 2^(bits − l)
+        // lookup patterns it is a prefix of. Symbols are < 2^12 (the
+        // largest alphabet has 511), so symbol and length share a u16.
+        let prefix_bits = longest.clamp(1, PREFIX_BITS_MAX);
+        let mut prefix = vec![NO_ENTRY; 1usize << prefix_bits];
+        for l in 1..=prefix_bits as usize {
+            let span = 1usize << (prefix_bits as usize - l);
+            for rel in 0..count[l] {
+                let sym = symbols[(first_index[l] + rel) as usize];
+                let start = ((first_code[l] + rel) as usize) << (prefix_bits as usize - l);
+                prefix[start..start + span].fill((sym << 4) | (l as u16 - 1));
+            }
+        }
         Ok(CodeSet::Canonical(Box::new(Canonical {
             first_code,
             first_index,
             count,
             symbols,
+            prefix,
+            prefix_bits,
         })))
     }
 
     /// Decodes one symbol.
+    #[inline]
     fn decode(&self, r: &mut BitReader) -> Result<u32> {
         match self {
             CodeSet::Degenerate(v) => Ok(*v),
             CodeSet::Canonical(c) => {
-                let mut code = 0u32;
-                for l in 1..=MAX_CODE_LEN as usize {
-                    code = (code << 1) | r.read(1)?;
-                    let rel = code.wrapping_sub(c.first_code[l]);
-                    if c.count[l] > 0 && rel < c.count[l] {
+                let (bits, real) = r.peek16();
+                let entry = c.prefix[(bits >> (16 - c.prefix_bits)) as usize];
+                if entry != NO_ENTRY {
+                    let len = (entry & 0xF) as u32 + 1;
+                    if len <= real {
+                        r.skip(len);
+                        return Ok((entry >> 4) as u32);
+                    }
+                    // The code runs past the end of input.
+                    return Err(Error::UnexpectedEof {
+                        context: "GL bitstream",
+                    });
+                }
+                // A code longer than the lookup width, or none: test
+                // each remaining length against its canonical range.
+                for l in c.prefix_bits as usize + 1..=MAX_CODE_LEN as usize {
+                    if l as u32 > real {
+                        break;
+                    }
+                    let rel = (bits >> (16 - l)).wrapping_sub(c.first_code[l]);
+                    if rel < c.count[l] {
+                        r.skip(l as u32);
                         return Ok(c.symbols[(c.first_index[l] + rel) as usize] as u32);
                     }
+                }
+                if real < MAX_CODE_LEN as u32 {
+                    // Input ended before any code completed.
+                    return Err(Error::UnexpectedEof {
+                        context: "GL bitstream",
+                    });
                 }
                 Err(Error::invalid("GL bit pattern matches no code"))
             }
@@ -346,7 +422,11 @@ fn decompress_inner(
         return Err(Error::invalid(format!("GL window size {window}")));
     }
     let mut r = BitReader::new(data);
-    let mut out = Vec::new();
+    // A code is at least one bit, so the output of a literal stream
+    // is bounded by eight times its input; reserving twice the input
+    // (never more than the caller's limit) covers real streams
+    // without trusting any declared size.
+    let mut out = Vec::with_capacity(max_out.min(data.len().saturating_mul(2)));
     let mut ring = vec![0u8; window];
     let mut wpos = 0usize;
     let push = |out: &mut Vec<u8>, ring: &mut Vec<u8>, wpos: &mut usize, b: u8| {
@@ -435,6 +515,12 @@ enum Token {
     /// bytes before the write position (the documented distance rule),
     /// so `dist == 0` re-reads the byte just written and self-extends.
     Match { len: u16, dist: u16 },
+}
+
+impl From<u8> for Token {
+    fn from(b: u8) -> Self {
+        Token::Lit(b)
+    }
 }
 
 /// Splits a match distance into (offset symbol, extra value, extra
@@ -568,9 +654,18 @@ fn literal_transmission(lengths: &[u8]) -> (usize, Vec<(u8, u32, u32)>) {
 
 /// Entropy-codes a token stream as GL blocks — the shared back half
 /// of both encoders. The final block carries the end-of-stream code.
-fn write_tokens(tokens: &[Token]) -> Vec<u8> {
+///
+/// Generic over the token source so a literal-only stream is coded
+/// straight from its bytes, without materialising a token list.
+fn write_tokens<T>(tokens: &[T]) -> Vec<u8>
+where
+    T: Copy,
+    Token: From<T>,
+{
     let mut w = BitWriter::new();
-    let mut chunks: Vec<&[Token]> = tokens.chunks(BLOCK_CODES).collect();
+    // Entropy-coded embroidery streams land near one byte per token.
+    w.out.reserve(tokens.len());
+    let mut chunks: Vec<&[T]> = tokens.chunks(BLOCK_CODES).collect();
     if chunks.is_empty() {
         chunks.push(&[]);
     }
@@ -582,8 +677,8 @@ fn write_tokens(tokens: &[Token]) -> Vec<u8> {
         // offset code over the matches' offset symbols.
         let mut lit_freq = vec![0u32; LIT_ALPHABET];
         let mut off_freq = vec![0u32; OFF_ALPHABET];
-        for t in chunk.iter() {
-            match *t {
+        for &t in chunk.iter() {
+            match Token::from(t) {
                 Token::Lit(b) => lit_freq[b as usize] += 1,
                 Token::Match { len, dist } => {
                     lit_freq[len as usize + 253] += 1;
@@ -663,8 +758,8 @@ fn write_tokens(tokens: &[Token]) -> Vec<u8> {
         }
 
         // The codes themselves.
-        for t in chunk.iter() {
-            match *t {
+        for &t in chunk.iter() {
+            match Token::from(t) {
                 Token::Lit(b) => {
                     let (code, len) = lit_codes[b as usize];
                     w.write(code, len as u32);
@@ -694,8 +789,7 @@ fn write_tokens(tokens: &[Token]) -> Vec<u8> {
 /// is the shape every real HUS/VIP producer emits, and the encoder
 /// the HUS/VIP writers use.
 pub fn compress(data: &[u8]) -> Vec<u8> {
-    let tokens: Vec<Token> = data.iter().map(|&b| Token::Lit(b)).collect();
-    write_tokens(&tokens)
+    write_tokens(data)
 }
 
 /// Compresses `data` as a **match-bearing** GL stream over the given
@@ -1278,6 +1372,75 @@ mod tests {
             decompress(&packed, 10),
             Err(Error::Invalid { .. })
         ));
+    }
+
+    /// The definition of canonical decoding — one bit at a time,
+    /// tested against each length's code range — which the
+    /// prefix-table decoder must reproduce exactly: same symbol, same
+    /// bits consumed, same error kind on truncated or uncoded input.
+    fn decode_bitwise(c: &Canonical, r: &mut BitReader) -> Result<u32> {
+        let mut code = 0u32;
+        for l in 1..=MAX_CODE_LEN as usize {
+            code = (code << 1) | r.read(1)?;
+            let rel = code.wrapping_sub(c.first_code[l]);
+            if rel < c.count[l] {
+                return Ok(c.symbols[(c.first_index[l] + rel) as usize] as u32);
+            }
+        }
+        Err(Error::invalid("GL bit pattern matches no code"))
+    }
+
+    #[test]
+    fn prefix_table_decode_equals_bitwise_decode() {
+        // Complete and incomplete codes, shorter and longer than the
+        // lookup width, up to the 16-bit maximum.
+        let mut deep = vec![0u8; 40];
+        for (i, l) in deep.iter_mut().enumerate().take(16) {
+            *l = i as u8 + 1; // lengths 1…16: one code each
+        }
+        deep[16] = 16; // completes the code
+        let mut wide = vec![9u8; 400];
+        wide[..100].fill(8); // 100 × 2⁻⁸ + 300 × 2⁻⁹ < 1: incomplete
+        let sets: Vec<Vec<u8>> = vec![
+            deep,
+            wide,
+            vec![1, 2, 3, 3],
+            vec![3, 3, 3, 0, 12, 12, 16],
+            vec![0, 0, 5],
+            vec![11; 600],
+            vec![2, 2, 2, 2],
+        ];
+        let mut state = 0xC0FF_EE11u32;
+        let mut next = || {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            state >> 8
+        };
+        for lengths in &sets {
+            let set = CodeSet::from_lengths(lengths).unwrap();
+            let CodeSet::Canonical(c) = &set else {
+                unreachable!()
+            };
+            for _ in 0..4000 {
+                // 0…5 bytes of input, so every truncation point occurs.
+                let n = (next() % 6) as usize;
+                let data: Vec<u8> = (0..n).map(|_| next() as u8).collect();
+                let (mut fast, mut slow) = (BitReader::new(&data), BitReader::new(&data));
+                // Decode symbols until either reader fails; both must
+                // agree at every step, including on the failure.
+                loop {
+                    let (a, b) = (set.decode(&mut fast), decode_bitwise(c, &mut slow));
+                    match (a, b) {
+                        (Ok(x), Ok(y)) => {
+                            assert_eq!(x, y);
+                            assert_eq!(fast.bytes_consumed(), slow.bytes_consumed());
+                        }
+                        (Err(Error::UnexpectedEof { .. }), Err(Error::UnexpectedEof { .. }))
+                        | (Err(Error::Invalid { .. }), Err(Error::Invalid { .. })) => break,
+                        (a, b) => panic!("decoders disagree on {data:02x?}: {a:?} vs {b:?}"),
+                    }
+                }
+            }
+        }
     }
 
     #[test]
