@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.5](https://github.com/OxideAV/oxideav-embroidery/compare/v0.0.4...v0.0.5) - 2026-11-13
+
+### Other
+
+- Framework demuxer: report decode warnings as container metadata
+- Throughput example, README before/after table, CHANGELOG
+- prefix-table symbol decode; literal streams coded from their bytes
+- render every thumbnail in one walk of the design
+- compile-time movement and record tables, single-buffer encode
+- Decode diagnostics: control codes without file evidence are never silent movement
+- README + CHANGELOG: 2026-09 fixture round (80/80), XXX palette, PEC layout bytes, HUS magic
+- fixture sweep over docs/embroidery/fixtures-2026-09 (80 files)
+- positional 21-slot palette block, trailer, byte-exact re-serialisation
+- surface section-1 +31..+33 and +40..+45 raw; layout-chosen +31 on write
+- second documented magic, end-record-less streams, VIP name from the record tail; GL decode stats
+- Drop the empty impl blocks left by the non_exhaustive pass
+- API hygiene: non_exhaustive model, option and file records; hide gl
+
 ### Fixed
 
 - EXP: a control record whose code byte has no file evidence is no longer decoded as a silent jump. Only `80 01` (colour change) and `80 04` (jump) occur in the staged corpus (9 files, 43 + 938 records); `80 02` and the other odd codes still follow the documented rule but are reported, and every other even code — `80 80` included — is consumed with **no command and no needle movement** and reported, so an unknown record can no longer shift the rest of the design.
