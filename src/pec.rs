@@ -355,7 +355,9 @@ pub fn decode_stitches(data: &[u8]) -> Result<(Vec<Command>, bool, usize)> {
 pub(crate) fn decode_stitches_diag(
     data: &[u8],
 ) -> Result<(Vec<Command>, bool, usize, Diagnostics)> {
-    let mut commands = Vec::new();
+    // A record is at least two bytes; the stream is usually followed
+    // by thumbnails, so this over-reserves slightly, never unboundedly.
+    let mut commands = Vec::with_capacity(data.len() / 2 + 1);
     let mut diagnostics = Diagnostics::default();
     let mut i = 0usize;
     let mut leading = false;
@@ -457,7 +459,8 @@ fn push_move(out: &mut Vec<u8>, mut dx: i32, mut dy: i32, kind: AxisKind) {
 /// Encodes a design's commands as a PEC stitch stream, including the
 /// opening `(0, 0)` pair and the terminating `0xFF`.
 pub fn encode_stitches(design: &Design) -> Result<Vec<u8>> {
-    let mut out = vec![0x00, 0x00];
+    let mut out = Vec::with_capacity(2 * design.commands.len() + 3);
+    out.extend_from_slice(&[0x00, 0x00]);
     let mut cc_index = 2u8;
     let mut ended = false;
     for c in &design.commands {
@@ -489,48 +492,54 @@ pub fn encode_stitches(design: &Design) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-fn render_thumbnail(design: &Design, color_block: Option<usize>, frame: bool) -> Vec<u8> {
-    let mut img = vec![0u8; THUMB_LEN];
-    let mut set = |x: i32, y: i32| {
-        if (0..THUMB_WIDTH as i32).contains(&x) && (0..THUMB_HEIGHT as i32).contains(&y) {
-            img[y as usize * THUMB_STRIDE + (x / 8) as usize] |= 0x80 >> (x % 8);
-        }
-    };
-    if frame {
-        for x in 0..THUMB_WIDTH as i32 {
-            set(x, 0);
-            set(x, THUMB_HEIGHT as i32 - 1);
-        }
-        for y in 0..THUMB_HEIGHT as i32 {
-            set(0, y);
-            set(THUMB_WIDTH as i32 - 1, y);
+/// Renders every thumbnail of a design in one walk of its commands,
+/// appending them to `out`: the framed whole-design image first,
+/// then one unframed image per colour block (`blocks` of them).
+fn render_thumbnails(design: &Design, e: crate::Extents, blocks: usize, out: &mut Vec<u8>) {
+    let base = out.len();
+    out.resize(base + (blocks + 1) * THUMB_LEN, 0);
+    let images = &mut out[base..];
+    let bit = |x: usize, y: usize| (y * THUMB_STRIDE + x / 8, 0x80u8 >> (x % 8));
+    // Frame of the whole-design image.
+    for x in 0..THUMB_WIDTH {
+        for y in [0, THUMB_HEIGHT - 1] {
+            let (at, mask) = bit(x, y);
+            images[at] |= mask;
         }
     }
-    let e = design.extents();
-    let (w, h) = (e.width().max(1), e.height().max(1));
-    let scale = |x: i32, y: i32| {
-        let px = (x - e.min_x) as i64 * (THUMB_WIDTH as i64 - 5) / w as i64 + 2;
-        let py = (y - e.min_y) as i64 * (THUMB_HEIGHT as i64 - 5) / h as i64 + 2;
-        (px as i32, py as i32)
-    };
+    for y in 0..THUMB_HEIGHT {
+        for x in [0, THUMB_WIDTH - 1] {
+            let (at, mask) = bit(x, y);
+            images[at] |= mask;
+        }
+    }
+    let (w, h) = (e.width().max(1) as i64, e.height().max(1) as i64);
     let (mut x, mut y) = (0i32, 0i32);
     let mut block = 0usize;
     for c in &design.commands {
         let (dx, dy) = c.delta();
         x += dx;
         y += dy;
-        if let Command::ColorChange { .. } = c {
-            block += 1;
-            continue;
-        }
-        if let Command::Stitch { .. } = c
-            && color_block.is_none_or(|b| b == block)
-        {
-            let (px, py) = scale(x, y);
-            set(px, py);
+        match c {
+            Command::ColorChange { .. } => block += 1,
+            Command::Stitch { .. } => {
+                // Every position lies inside the extents, so the
+                // scaled pixel lies inside the 2-pixel margin; the
+                // guard keeps a pixel off the image harmless.
+                let px = ((x - e.min_x) as i64 * (THUMB_WIDTH as i64 - 5) / w + 2) as usize;
+                let py = ((y - e.min_y) as i64 * (THUMB_HEIGHT as i64 - 5) / h + 2) as usize;
+                if px >= THUMB_WIDTH || py >= THUMB_HEIGHT {
+                    continue;
+                }
+                let (at, mask) = bit(px, py);
+                images[at] |= mask;
+                if block < blocks {
+                    images[(block + 1) * THUMB_LEN + at] |= mask;
+                }
+            }
+            _ => {}
         }
     }
-    img
 }
 
 /// Encodes a design as a PEC block (the bytes a `.pes`/`.phc`
@@ -593,7 +602,7 @@ pub fn encode_block(design: &Design, options: &PecEncodeOptions) -> Result<Vec<u
     sec1.resize(SECTION1_LEN, 0x20);
 
     let thumb_offset = (SECTION2_LEN + stitches.len()) as u32;
-    let e = design.extents();
+    let e = pre;
     let mut sec2 = Vec::with_capacity(SECTION2_LEN);
     sec2.extend_from_slice(&[0x00, 0x00]);
     sec2.extend_from_slice(&thumb_offset.to_le_bytes()[..3]);
@@ -614,10 +623,7 @@ pub fn encode_block(design: &Design, options: &PecEncodeOptions) -> Result<Vec<u
     let mut out = sec1;
     out.extend_from_slice(&sec2);
     out.extend_from_slice(&stitches);
-    out.extend_from_slice(&render_thumbnail(design, None, true));
-    for b in 0..blocks {
-        out.extend_from_slice(&render_thumbnail(design, Some(b), false));
-    }
+    render_thumbnails(design, e, blocks, &mut out);
     Ok(out)
 }
 
@@ -979,6 +985,86 @@ mod tests {
         // The encoder never emits the undocumented bit.
         let block = encode_block(&sample_design(), &PecEncodeOptions::default()).unwrap();
         assert!(decode_block(&block).unwrap().design.diagnostics.is_empty());
+    }
+
+    /// One thumbnail the plain way: a walk of the whole design that
+    /// plots the stitches of one colour block (or of all of them).
+    fn thumbnail_reference(design: &Design, color_block: Option<usize>, frame: bool) -> Vec<u8> {
+        let mut img = vec![0u8; THUMB_LEN];
+        let mut set = |x: i64, y: i64| {
+            if (0..THUMB_WIDTH as i64).contains(&x) && (0..THUMB_HEIGHT as i64).contains(&y) {
+                img[y as usize * THUMB_STRIDE + (x / 8) as usize] |= 0x80 >> (x % 8);
+            }
+        };
+        if frame {
+            for x in 0..THUMB_WIDTH as i64 {
+                set(x, 0);
+                set(x, THUMB_HEIGHT as i64 - 1);
+            }
+            for y in 0..THUMB_HEIGHT as i64 {
+                set(0, y);
+                set(THUMB_WIDTH as i64 - 1, y);
+            }
+        }
+        let e = design.extents();
+        let (w, h) = (e.width().max(1) as i64, e.height().max(1) as i64);
+        let mut block = 0usize;
+        for (c, (x, y)) in design.commands.iter().zip(design.positions()) {
+            match c {
+                Command::ColorChange { .. } => block += 1,
+                Command::Stitch { .. } if color_block.is_none_or(|b| b == block) => set(
+                    (x - e.min_x) as i64 * (THUMB_WIDTH as i64 - 5) / w + 2,
+                    (y - e.min_y) as i64 * (THUMB_HEIGHT as i64 - 5) / h + 2,
+                ),
+                _ => {}
+            }
+        }
+        img
+    }
+
+    #[test]
+    fn single_walk_thumbnails_equal_per_block_renders() {
+        let mut state = 0x7E57_0001u32;
+        let mut next = || {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (state >> 8) as i32
+        };
+        for blocks in [1usize, 2, 5, 9] {
+            let mut commands = Vec::new();
+            for b in 0..blocks {
+                if b > 0 {
+                    commands.push(Command::ColorChange {
+                        dx: next() % 40 - 20,
+                        dy: 0,
+                        index: None,
+                    });
+                }
+                for i in 0..300 {
+                    let (dx, dy) = (next() % 81 - 40, next() % 81 - 40);
+                    commands.push(match i % 50 {
+                        0 => Command::Jump { dx, dy },
+                        1 => Command::Trim { dx: 0, dy: 0 },
+                        _ => Command::Stitch { dx, dy },
+                    });
+                }
+            }
+            commands.push(Command::End);
+            let d = Design {
+                commands,
+                ..Default::default()
+            };
+            let block = encode_block(&d, &PecEncodeOptions::default()).unwrap();
+            let p = decode_block(&block).unwrap();
+            assert_eq!(p.thumbnails.len(), blocks + 1);
+            assert_eq!(p.thumbnails[0], thumbnail_reference(&d, None, true));
+            for b in 0..blocks {
+                assert_eq!(
+                    p.thumbnails[b + 1],
+                    thumbnail_reference(&d, Some(b), false),
+                    "colour block {b} of {blocks}"
+                );
+            }
+        }
     }
 
     #[test]
