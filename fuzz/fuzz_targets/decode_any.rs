@@ -9,7 +9,14 @@ use oxideav_embroidery::{art, col, dst, edr, exp, gl, hus, jef, pec, pes, phc, p
 
 fuzz_target!(|data: &[u8]| {
     let _ = oxideav_embroidery::probe(data);
-    let _ = oxideav_embroidery::decode(data);
+    // Strict decode succeeds exactly when the lenient decode raised
+    // no warning.
+    let strict =
+        oxideav_embroidery::decode_with(data, &oxideav_embroidery::DecodeOptions::strict());
+    match oxideav_embroidery::decode(data) {
+        Ok((_, design)) => assert_eq!(strict.is_ok(), design.diagnostics.is_empty()),
+        Err(_) => assert!(strict.is_err()),
+    }
     let _ = dst::decode(data);
     let _ = dst::decode_header(data);
     let _ = pec::decode(data);

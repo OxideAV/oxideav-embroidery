@@ -44,7 +44,7 @@
 //! `0x00` and `0x1B 0x00` occur in the corpus; zeros are written
 //! here), and the meaning of VIP's three constant u32 fields.
 
-use crate::model::{Command, Thread};
+use crate::model::{Command, Diagnostics, Thread, WarningAction};
 use crate::{Design, Error, Result, gl};
 
 /// The HUS magic (u32 LE at offset 0) the encoder writes by default.
@@ -290,10 +290,11 @@ pub fn decode_design(file: &HusFile) -> Result<Design> {
     let ys = stream(&file.y_deltas, "Y-delta")?;
 
     let mut commands = Vec::with_capacity(n);
-    for i in 0..n {
-        let dx = xs[i] as i8 as i32;
-        let dy = ys[i] as i8 as i32;
-        match attrs[i] {
+    let mut diagnostics = Diagnostics::default();
+    for (i, ((&attr, &x), &y)) in attrs.iter().zip(&xs).zip(&ys).enumerate() {
+        let dx = x as i8 as i32;
+        let dy = y as i8 as i32;
+        match attr {
             ATTR_STITCH => commands.push(Command::Stitch { dx, dy }),
             ATTR_JUMP => commands.push(Command::Jump { dx, dy }),
             ATTR_COLOR_CHANGE => commands.push(Command::ColorChange {
@@ -310,11 +311,10 @@ pub fn decode_design(file: &HusFile) -> Result<Design> {
                     ));
                 }
             }
-            other => {
-                return Err(Error::invalid(format!(
-                    "HUS attribute byte 0x{other:02x} not documented"
-                )));
-            }
+            // Outside the five corpus-validated values. Records are
+            // fixed-width, so the stream stays in step: the record is
+            // dropped (no command, no movement) and reported.
+            other => diagnostics.push("HUS", i, other, [x, y], WarningAction::Skipped),
         }
     }
     Ok(Design {
@@ -325,6 +325,7 @@ pub fn decode_design(file: &HusFile) -> Result<Design> {
             .clone()
             .filter(|s| !s.is_empty())
             .or_else(|| file.label.clone()),
+        diagnostics,
     })
 }
 
@@ -821,16 +822,36 @@ mod tests {
     }
 
     #[test]
-    fn undocumented_attribute_rejected() {
+    fn undocumented_attribute_skipped_and_reported() {
         // Rebuild a valid file with one attribute byte corrupted.
         let d = sample();
         let bytes = encode(&d, &HusEncodeOptions::default()).unwrap();
         let mut f = parse(&bytes).unwrap();
         let n = f.stitch_count as usize;
         let (mut attrs, _) = gl::decompress(&f.attributes, n).unwrap();
+        let (xs, _) = gl::decompress(&f.x_deltas, n).unwrap();
+        let (ys, _) = gl::decompress(&f.y_deltas, n).unwrap();
         attrs[0] = 0x82; // never observed in the corpus
         f.attributes = gl::compress(&attrs);
-        assert!(matches!(decode_design(&f), Err(Error::Invalid { .. })));
+        // Lenient: the record is dropped — no command, no movement —
+        // and reported; strict: the typed error.
+        let clean = decode_design(&parse(&bytes).unwrap()).unwrap();
+        let got = decode_design(&f).unwrap();
+        assert_eq!(got.commands, clean.commands[1..]);
+        let w = got.diagnostics.warnings();
+        assert_eq!(w.len(), 1);
+        assert_eq!((w[0].format, w[0].code, w[0].offset), ("HUS", 0x82, 0));
+        assert_eq!(w[0].payload, [xs[0], ys[0]]);
+        assert_eq!(w[0].action, WarningAction::Skipped);
+        assert!(matches!(
+            crate::DecodeOptions::strict().check(&got),
+            Err(Error::UnknownControl {
+                format: "HUS",
+                code: 0x82,
+                offset: 0
+            })
+        ));
+        assert!(clean.diagnostics.is_empty());
     }
 
     #[test]

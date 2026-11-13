@@ -190,18 +190,18 @@ pub fn decode(data: &[u8]) -> Result<PhxFile> {
         if cand >= data.len() {
             continue;
         }
-        if let Ok((commands, _leading, used)) = pec::decode_stitches(&data[cand..]) {
+        if let Ok((commands, _leading, used, diag)) = pec::decode_stitches_diag(&data[cand..]) {
             if cand + used == data.len() {
-                found = Some((cand, commands));
+                found = Some((cand, commands, diag));
                 break;
             }
             if fallback.is_none() {
-                fallback = Some((cand, commands));
+                fallback = Some((cand, commands, diag));
             }
         }
     }
     let found = found.or(fallback);
-    let (stitch_offset, commands) = found.ok_or_else(|| {
+    let (stitch_offset, commands, diagnostics) = found.ok_or_else(|| {
         Error::invalid("PHX #VAR offset does not lead to a well-formed PEC stream")
     })?;
 
@@ -230,6 +230,7 @@ pub fn decode(data: &[u8]) -> Result<PhxFile> {
             commands,
             threads,
             label: None,
+            diagnostics,
         },
     })
 }

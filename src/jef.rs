@@ -220,10 +220,15 @@ pub fn decode(data: &[u8]) -> Result<JefFile> {
                     terminated = true;
                     break;
                 }
+                // The length of an undocumented escape record is
+                // itself unknown, so the stream cannot be kept in
+                // step past it: a typed error in every mode.
                 other => {
-                    return Err(Error::invalid(format!(
-                        "JEF escape code 0x{other:02x} not documented"
-                    )));
+                    return Err(Error::UnknownControl {
+                        format: "JEF",
+                        code: other,
+                        offset: stitch_offset + i - 2,
+                    });
                 }
             }
         } else {
@@ -260,6 +265,7 @@ pub fn decode(data: &[u8]) -> Result<JefFile> {
             commands,
             threads,
             label: None,
+            ..Default::default()
         },
     })
 }
@@ -502,7 +508,16 @@ mod tests {
         let off = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
         bytes[off] = 0x80;
         bytes[off + 1] = 0x42;
-        assert!(matches!(decode(&bytes), Err(Error::Invalid { .. })));
+        // The record length of an undocumented escape is unknown,
+        // so this is a typed error in every mode.
+        assert!(matches!(
+            decode(&bytes),
+            Err(Error::UnknownControl {
+                format: "JEF",
+                code: 0x42,
+                offset
+            }) if offset == off
+        ));
     }
 
     #[test]

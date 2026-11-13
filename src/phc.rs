@@ -174,7 +174,8 @@ fn decode_body(data: &[u8], base: usize, record_extra: usize, name: &'static str
     }
     let design_record = data[thumbs_end..stitch_offset].to_vec();
 
-    let (commands, _leading, _used) = pec::decode_stitches(&data[stitch_offset..])?;
+    let (commands, _leading, _used, diagnostics) =
+        pec::decode_stitches_diag(&data[stitch_offset..])?;
     let threads = palette
         .iter()
         .map(|&idx| {
@@ -201,6 +202,7 @@ fn decode_body(data: &[u8], base: usize, record_extra: usize, name: &'static str
             commands,
             threads,
             label: None,
+            diagnostics,
         },
     })
 }

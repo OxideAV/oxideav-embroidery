@@ -60,7 +60,9 @@ pub mod phx;
 pub mod vp3;
 pub mod xxx;
 
-pub use model::{Command, Counts, Design, Extents, Thread};
+pub use model::{
+    Command, Counts, DecodeWarning, Design, Diagnostics, Extents, Thread, WarningAction,
+};
 
 #[cfg(feature = "registry")]
 pub use framework::{design_to_vector, make_decoder, make_demuxer, register};
@@ -152,6 +154,65 @@ pub fn decode(data: &[u8]) -> Result<(Format, Design)> {
     Ok((format, design))
 }
 
+/// How tolerant a decode is of records outside the evidence-backed
+/// vocabulary of a format.
+///
+/// The default is **lenient**: such records never become silent
+/// needle movement — each is either skipped or decoded by the
+/// documented general rule, and recorded in
+/// [`Design::diagnostics`]. **Strict** turns the first such record
+/// into [`Error::UnknownControl`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DecodeOptions {
+    strict: bool,
+}
+
+impl DecodeOptions {
+    /// Lenient options (the default).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Strict options: any decode warning is an error.
+    pub fn strict() -> Self {
+        Self { strict: true }
+    }
+
+    /// Set strictness.
+    pub fn with_strict(mut self, strict: bool) -> Self {
+        self.strict = strict;
+        self
+    }
+
+    /// Whether warnings are errors.
+    pub fn is_strict(&self) -> bool {
+        self.strict
+    }
+
+    /// Applies these options to a decoded design: under strict
+    /// options a design carrying warnings is rejected with the first
+    /// one as [`Error::UnknownControl`]. Use it after any per-format
+    /// `decode` to get strict behaviour for that format.
+    pub fn check(&self, design: &Design) -> Result<()> {
+        match design.diagnostics.warnings().first() {
+            Some(w) if self.strict => Err(Error::UnknownControl {
+                format: w.format,
+                code: w.code,
+                offset: w.offset,
+            }),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// [`decode`] under explicit [`DecodeOptions`].
+pub fn decode_with(data: &[u8], options: &DecodeOptions) -> Result<(Format, Design)> {
+    let (format, design) = decode(data)?;
+    options.check(&design)?;
+    Ok((format, design))
+}
+
 /// Crate-level error type.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -185,6 +246,18 @@ pub enum Error {
         /// The offending field.
         field: &'static str,
     },
+    /// A control code / flag combination outside the evidence-backed
+    /// vocabulary of the format: raised by strict decodes, and by
+    /// every decode where the record's length is itself undocumented
+    /// (so the stream cannot be resynchronised).
+    UnknownControl {
+        /// Short format name.
+        format: &'static str,
+        /// The code as stored.
+        code: u8,
+        /// Offset of the record (see [`DecodeWarning::offset`]).
+        offset: usize,
+    },
 }
 
 impl Error {
@@ -208,6 +281,14 @@ impl core::fmt::Display for Error {
             Error::Invalid { reason } => write!(f, "invalid data: {reason}"),
             Error::Unsupported { what } => write!(f, "unsupported: {what}"),
             Error::OutOfRange { field } => write!(f, "value out of range for {field}"),
+            Error::UnknownControl {
+                format,
+                code,
+                offset,
+            } => write!(
+                f,
+                "{format} control code 0x{code:02x} at offset {offset} is not backed by the documentation"
+            ),
         }
     }
 }

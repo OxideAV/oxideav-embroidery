@@ -23,8 +23,9 @@ pub enum Command {
     /// A jump: move the needle without sewing.
     Jump { dx: i32, dy: i32 },
     /// A trim: cut the thread, optionally moving. Formats without a
-    /// distinct trim opcode (DST, EXP, JEF) express trims as jump
-    /// conventions; PEC carries an explicit trim flag.
+    /// documented trim record (DST, EXP, JEF) express trims as jump
+    /// conventions; PEC carries an explicit trim flag and HUS an
+    /// explicit trim attribute.
     Trim { dx: i32, dy: i32 },
     /// A colour change (which also stops the machine so the operator
     /// or changer can switch thread). `index` preserves the byte some
@@ -93,6 +94,102 @@ impl Thread {
     }
 }
 
+/// What a decoder did with a control record it holds no file
+/// evidence for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum WarningAction {
+    /// The record was consumed and produced no command and no needle
+    /// movement: its payload has no evidence-backed meaning.
+    Skipped,
+    /// The record was decoded by the documented general rule, which
+    /// no staged file exercises (the movement it carries is defined
+    /// by the format's tables; only its command kind is unverified).
+    DecodedByRule,
+}
+
+/// One non-fatal finding of a decoder: a control code or flag
+/// combination outside the evidence-backed vocabulary of its format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct DecodeWarning {
+    /// Short format name (`"EXP"`, `"DST"`, `"PEC"`, `"HUS"`).
+    pub format: &'static str,
+    /// Byte offset of the record within the decoded stitch stream
+    /// (EXP: the file; DST: the file; PEC: the stitch stream; HUS:
+    /// the record index).
+    pub offset: usize,
+    /// The control code / flag byte as stored.
+    pub code: u8,
+    /// The two bytes that travel with the code (EXP: the record
+    /// payload; DST: record bytes 1 and 2; PEC: the two bytes after
+    /// the flag byte, zero-filled at end of input; HUS: the X and Y
+    /// delta bytes).
+    pub payload: [u8; 2],
+    /// What the decoder did with the record.
+    pub action: WarningAction,
+}
+
+/// The warnings one decode produced. At most
+/// [`Diagnostics::MAX_RECORDED`] are kept in detail (hostile inputs
+/// cannot grow the list without bound); [`Diagnostics::total`]
+/// counts all of them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Diagnostics {
+    warnings: Vec<DecodeWarning>,
+    total: usize,
+}
+
+impl Diagnostics {
+    /// How many warnings are kept in detail.
+    pub const MAX_RECORDED: usize = 64;
+
+    /// The recorded warnings, in stream order.
+    pub fn warnings(&self) -> &[DecodeWarning] {
+        &self.warnings
+    }
+
+    /// Total number of warnings raised, recorded or not.
+    pub fn total(&self) -> usize {
+        self.total
+    }
+
+    /// `true` when the decode met nothing outside the evidence-backed
+    /// vocabulary.
+    pub fn is_empty(&self) -> bool {
+        self.total == 0
+    }
+
+    pub(crate) fn push(
+        &mut self,
+        format: &'static str,
+        offset: usize,
+        code: u8,
+        payload: [u8; 2],
+        action: WarningAction,
+    ) {
+        self.total += 1;
+        if self.warnings.len() < Self::MAX_RECORDED {
+            self.warnings.push(DecodeWarning {
+                format,
+                offset,
+                code,
+                payload,
+                action,
+            });
+        }
+    }
+
+    /// Appends another decode's findings (used where one container
+    /// decodes an embedded stream).
+    #[allow(dead_code)]
+    pub(crate) fn absorb(&mut self, other: Diagnostics) {
+        self.total += other.total;
+        let room = Self::MAX_RECORDED - self.warnings.len();
+        self.warnings.extend(other.warnings.into_iter().take(room));
+    }
+}
+
 /// Signed bounding box of needle positions, in 0.1 mm design units.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Extents {
@@ -140,6 +237,11 @@ pub struct Design {
     /// Design label, when the format stores one (DST `LA:`, PEC
     /// `LA:`).
     pub label: Option<String>,
+    /// What the decoder met that the staged documentation does not
+    /// back with file evidence (undocumented control codes and flag
+    /// bits). Empty for a clean decode and for hand-built designs;
+    /// encoders ignore it.
+    pub diagnostics: Diagnostics,
 }
 
 impl Design {
@@ -254,6 +356,7 @@ mod tests {
             ],
             threads: vec![Thread::default(), Thread::default()],
             label: Some("TEST".into()),
+            ..Default::default()
         }
     }
 

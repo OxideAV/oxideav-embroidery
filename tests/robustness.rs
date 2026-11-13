@@ -186,3 +186,60 @@ fn extents_saturate_instead_of_overflowing() {
     assert!(jef::encode(&d, &jef::JefEncodeOptions::default()).is_err());
     assert!(hus::encode(&d, &hus::HusEncodeOptions::default()).is_err());
 }
+
+/// EXP over random record streams dense in control escapes: strict
+/// and lenient decodes agree, and a control code without file
+/// evidence never moves the needle — the decoded end position equals
+/// an independent walk of the raw records with those records dropped.
+#[test]
+fn exp_unevidenced_controls_never_move_the_needle() {
+    use oxideav_embroidery::{DecodeOptions, WarningAction};
+    let mut rng = Lcg(0x5EED_0E0E);
+    for _ in 0..2000 {
+        let records = (rng.next() % 200) as usize;
+        let mut data = Vec::new();
+        for _ in 0..records {
+            let r = rng.next();
+            if r.is_multiple_of(4) {
+                data.extend_from_slice(&[0x80, (r >> 8) as u8, (r >> 16) as u8, (r >> 24) as u8]);
+            } else {
+                let dx = (r >> 8) as u8;
+                data.extend_from_slice(&[if dx == 0x80 { 0x7F } else { dx }, (r >> 16) as u8]);
+            }
+        }
+        let design = exp::decode(&data).unwrap();
+        let (mut x, mut y, mut skipped) = (0i32, 0i32, 0usize);
+        let mut i = 0usize;
+        while i < data.len() {
+            if data[i] != 0x80 {
+                x += data[i] as i8 as i32;
+                y += data[i + 1] as i8 as i32;
+                i += 2;
+                continue;
+            }
+            let code = data[i + 1];
+            if code % 2 == 1 || code == 0x02 || code == 0x04 {
+                x += data[i + 2] as i8 as i32;
+                y += data[i + 3] as i8 as i32;
+            } else {
+                skipped += 1;
+            }
+            i += 4;
+        }
+        assert_eq!(design.positions().last().copied(), Some((x, y)));
+        let listed_skips = design
+            .diagnostics
+            .warnings()
+            .iter()
+            .filter(|w| w.action == WarningAction::Skipped)
+            .count();
+        assert!(listed_skips <= skipped && skipped <= design.diagnostics.total());
+        let strict = exp::decode_with(&data, &DecodeOptions::strict());
+        assert_eq!(strict.is_ok(), design.diagnostics.is_empty());
+        // What the writer produces from the decode is strict-clean
+        // and ends at the same needle position.
+        let again =
+            exp::decode_with(&exp::encode(&design).unwrap(), &DecodeOptions::strict()).unwrap();
+        assert_eq!(again.positions().last().copied(), Some((x, y)));
+    }
+}

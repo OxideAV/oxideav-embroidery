@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- EXP: a control record whose code byte has no file evidence is no longer decoded as a silent jump. Only `80 01` (colour change) and `80 04` (jump) occur in the staged corpus (9 files, 43 + 938 records); `80 02` and the other odd codes still follow the documented rule but are reported, and every other even code — `80 80` included — is consumed with **no command and no needle movement** and reported, so an unknown record can no longer shift the rest of the design.
+- DST: a record with bit 6 but not bit 7 of byte 3, or without the two always-set low bits, is reported instead of passing as an ordinary stitch (its movement, defined by the ternary table, is unchanged).
+- PEC (and PES / PHC / PHB / PHX through it): a long-form axis with the undocumented third flag bit (`0x40`) is reported.
+- HUS / VIP: an attribute byte outside the five corpus-validated values is skipped and reported (it used to fail the whole decode with `Error::Invalid`).
+- JEF: an undocumented escape code is now the typed `Error::UnknownControl` (was `Error::Invalid`); its record length is undocumented, so it stays an error in every mode.
+
 ### Changed
 
 - `#[non_exhaustive]`: the model records `Design`, `Thread` and `Counts`; the encode options `DstEncodeOptions`, `HusEncodeOptions`, `JefEncodeOptions` and `PecEncodeOptions`; the parsed file records `DstHeader`, `DstFile`, `HusFile`, `HusDecoded`, `JefFile`, `PecBlock`, `PesFile`, `PhcFile`, `PhbFile`, `PhxFile`, `Vp3File` and `XxxFile`. Code outside the crate builds the model and option records with `Default` plus the `with_*` setters. `Extents` (a bounding box) and the palette entries `ThreadColor` / `PhxColor` are unchanged.
@@ -14,6 +22,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Decode diagnostics: `Design::diagnostics` (`Diagnostics`, `DecodeWarning`, `WarningAction::{Skipped, DecodedByRule}`; at most 64 warnings kept in detail, all counted), `DecodeOptions` (`new` / `strict` / `with_strict` / `check`), `decode_with`, `exp::decode_with`, and `Error::UnknownControl { format, code, offset }` for strict decodes.
+- Tests: the EXP control-record tally of the corpus against its HUS siblings (zero needle drift with the HUS-only trims dropped), strict-clean decode of every corpus and fixture file, a property test that unevidenced EXP controls never move the needle; fuzz target `exp_decode`, and the strict / lenient agreement property in `decode_any`.
 - `with_*` setters for every field of `Design`, `Thread`, `DstEncodeOptions`, `HusEncodeOptions`, `JefEncodeOptions` and `PecEncodeOptions`.
 - HUS: the second documented magic `0x00C8FC5D` (`hus::MAGIC_FC5D`, `HUS_MAGICS`), `HusFile::magic`, `HusEncodeOptions::magic` / `with_magic`; streams without an end-of-design record decode; `HusFile::vip_record`.
 - GL: `gl::decompress_stats` / `GlStats` (literal and match counts, longest match, longest coded distance, distance-0 matches, blocks, bytes consumed).

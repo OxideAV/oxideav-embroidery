@@ -39,6 +39,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "exp_decode"
+path = "fuzz_targets/exp_decode.rs"
+test = false
+doc = false
+bench = false
+
 # The fuzz harness resolves its dependencies independently of the
 # workspace the crate is vendored into.
 [workspace]

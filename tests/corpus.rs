@@ -16,7 +16,7 @@
 
 use std::path::{Path, PathBuf};
 
-use oxideav_embroidery::{Command, Format, col, dst, edr, exp, gl, hus, jef};
+use oxideav_embroidery::{Command, DecodeOptions, Format, col, dst, edr, exp, gl, hus, jef};
 
 fn corpus_root() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("OXIDEAV_EMBROIDERY_CORPUS") {
@@ -364,5 +364,96 @@ fn cross_format_extent_agreement() {
                 assert_eq!(*ccs, ccs0, "colour changes for {stem}");
             }
         }
+    }
+}
+
+/// The EXP control-code vocabulary of the corpus, tallied from the
+/// raw bytes independently of the decoder: every `80 cc` record's
+/// code byte, plus what the HUS sibling's trim records correspond to
+/// on the EXP side.
+///
+/// This is the file evidence behind `exp`'s module table: only
+/// `80 01` and `80 04` occur, so the decoder is strict-clean on the
+/// whole corpus, and the producer writes **no record at all** where
+/// the HUS sibling carries a trim (the two needle paths agree at
+/// every record with the trims dropped — zero drift).
+#[test]
+fn exp_control_vocabulary_and_trim_evidence() {
+    let mut codes = std::collections::BTreeMap::<u8, usize>::new();
+    let (mut files, mut hus_trims, mut siblings, mut max_drift) = (0usize, 0usize, 0usize, 0i64);
+    for path in corpus_files(&["exp"]) {
+        let data = std::fs::read(&path).unwrap();
+        files += 1;
+        let mut i = 0usize;
+        while i + 1 < data.len() {
+            if data[i] == 0x80 {
+                *codes.entry(data[i + 1]).or_default() += 1;
+                i += 4;
+            } else {
+                i += 2;
+            }
+        }
+        assert_eq!(i, data.len(), "{} ends mid-record", path.display());
+        let design = exp::decode_with(&data, &DecodeOptions::strict())
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        assert!(design.diagnostics.is_empty());
+
+        let sibling = path.with_extension("hus");
+        if !sibling.exists() {
+            continue;
+        }
+        siblings += 1;
+        let h = hus::decode(&std::fs::read(&sibling).unwrap())
+            .unwrap()
+            .design;
+        hus_trims += h.counts().trims;
+        // Needle position after every non-trim, non-end record.
+        let path_of = |d: &oxideav_embroidery::Design| -> Vec<(i32, i32)> {
+            d.commands
+                .iter()
+                .zip(d.positions())
+                .filter(|(c, _)| !matches!(c, Command::Trim { .. } | Command::End))
+                .map(|(_, p)| p)
+                .collect()
+        };
+        let (hp, ep) = (path_of(&h), path_of(&design));
+        assert_eq!(hp.len(), ep.len(), "{}", path.display());
+        for (a, b) in hp.iter().zip(&ep) {
+            let d = (a.0 as i64 - b.0 as i64)
+                .abs()
+                .max((a.1 as i64 - b.1 as i64).abs());
+            max_drift = max_drift.max(d);
+        }
+    }
+    if files == 0 {
+        return;
+    }
+    let tally: Vec<String> = codes
+        .iter()
+        .map(|(code, n)| format!("80 {code:02X} x {n}"))
+        .collect();
+    eprintln!(
+        "EXP corpus: {files} files, control records [{}]; {siblings} HUS siblings \
+         carrying {hus_trims} trims, max needle drift {max_drift} units",
+        tally.join(", ")
+    );
+    assert!(
+        codes.keys().all(|c| [0x01, 0x04].contains(c)),
+        "a staged EXP file carries a control code outside the documented pair: {tally:?} \
+         — new file evidence, revisit exp's vocabulary table"
+    );
+    assert_eq!(max_drift, 0, "EXP and HUS needle paths drift apart");
+}
+
+/// Every signature-bearing corpus file decodes without a single
+/// decode warning: nothing in the corpus leaves the evidence-backed
+/// control vocabulary of its format.
+#[test]
+fn corpus_is_strict_clean() {
+    for path in corpus_files(&["dst", "pes", "pec", "phc", "phb", "jef", "hus", "vip"]) {
+        let data = std::fs::read(&path).unwrap();
+        let (_, design) = oxideav_embroidery::decode_with(&data, &DecodeOptions::strict())
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        assert!(design.diagnostics.is_empty());
     }
 }

@@ -18,7 +18,7 @@
 //! decoder must and does accept; a reader must not assume `+` on
 //! zero.
 
-use crate::model::{Command, Design};
+use crate::model::{Command, Design, Diagnostics, WarningAction};
 use crate::{Error, Result};
 
 /// Byte length of the DST header.
@@ -207,10 +207,11 @@ pub fn decode_header(data: &[u8]) -> Result<DstHeader> {
 pub fn decode(data: &[u8]) -> Result<DstFile> {
     let header = decode_header(data)?;
 
-    let mut commands = Vec::new();
+    let body = &data[HEADER_LEN..];
+    let mut commands = Vec::with_capacity(body.len() / 3 + 1);
+    let mut diagnostics = Diagnostics::default();
     let mut terminated = false;
     let mut trailing = 0usize;
-    let body = &data[HEADER_LEN..];
     let mut i = 0usize;
     while i + 3 <= body.len() {
         let (b1, b2, b3) = (body[i], body[i + 1], body[i + 2]);
@@ -222,6 +223,20 @@ pub fn decode(data: &[u8]) -> Result<DstFile> {
             break;
         }
         let (dx, dy) = decode_delta(b1, b2, b3);
+        // Outside the documented vocabulary: bit 6 without bit 7 (a
+        // colour change sets both; the lone bit has no file-backed
+        // meaning) and a record without the two always-set low
+        // bits. The ternary table still defines the movement, so the
+        // record keeps its historical reading and is reported.
+        if b3 & 0xC0 == 0x40 || b3 & 0x03 != 0x03 {
+            diagnostics.push(
+                "DST",
+                HEADER_LEN + i - 3,
+                b3,
+                [b1, b2],
+                WarningAction::DecodedByRule,
+            );
+        }
         if b3 & 0xC0 == 0xC0 {
             commands.push(Command::ColorChange {
                 dx,
@@ -248,6 +263,7 @@ pub fn decode(data: &[u8]) -> Result<DstFile> {
             commands,
             threads: Vec::new(),
             label,
+            diagnostics,
         },
         terminated,
         trailing_bytes: trailing,
@@ -529,6 +545,36 @@ mod tests {
     }
 
     #[test]
+    fn undocumented_control_bits_are_reported_not_silent() {
+        let d = sample_design();
+        let mut bytes = encode(&d, &DstEncodeOptions::default()).unwrap();
+        let clean = decode(&bytes).unwrap();
+        assert!(clean.design.diagnostics.is_empty());
+        // Bit 6 without bit 7 on the first record, and a second
+        // record without the always-set low bits.
+        let (b1, b2) = (bytes[HEADER_LEN], bytes[HEADER_LEN + 1]);
+        bytes[HEADER_LEN + 2] = (bytes[HEADER_LEN + 2] & 0x3F) | 0x40;
+        bytes[HEADER_LEN + 5] &= 0xFC;
+        let got = decode(&bytes).unwrap();
+        let w = got.design.diagnostics.warnings();
+        assert_eq!(w.len(), 2);
+        assert_eq!((w[0].format, w[0].offset), ("DST", HEADER_LEN));
+        assert_eq!(w[0].code & 0xC0, 0x40);
+        assert_eq!(w[0].payload, [b1, b2]);
+        assert_eq!(w[0].action, WarningAction::DecodedByRule);
+        assert_eq!(w[1].offset, HEADER_LEN + 3);
+        // The ternary table still defines the movement.
+        assert_eq!(
+            got.design.positions().last(),
+            clean.design.positions().last()
+        );
+        assert!(matches!(
+            crate::DecodeOptions::strict().check(&got.design),
+            Err(Error::UnknownControl { format: "DST", .. })
+        ));
+    }
+
+    #[test]
     fn worked_example_color_change() {
         // 00 00 C3 — colour change.
         assert_eq!(0xC3 & 0xC0, 0xC0);
@@ -569,6 +615,7 @@ mod tests {
             ],
             threads: vec![Thread::default(), Thread::default()],
             label: None,
+            ..Default::default()
         }
     }
 

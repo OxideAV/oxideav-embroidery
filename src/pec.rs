@@ -49,7 +49,7 @@
 //! big-endian values in `0x9000..=0x9FFF` there whose exact law the
 //! staged material records as unresolved).
 
-use crate::model::{Command, Design, Thread};
+use crate::model::{Command, Design, Diagnostics, Thread, WarningAction};
 use crate::{Error, Result};
 
 /// Standalone `.pec` signature.
@@ -309,6 +309,10 @@ impl PecEncodeOptions {
     }
 }
 
+/// The third long-form flag bit: the staged documentation defines
+/// only the jump (`0x10`) and trim (`0x20`) bits.
+const FLAG_UNDOCUMENTED: u8 = 0x40;
+
 fn axis_short(b: u8) -> i32 {
     let v = (b & 0x7F) as i32;
     if v >= 0x40 { v - 0x80 } else { v }
@@ -336,8 +340,23 @@ fn decode_axis(data: &[u8], i: usize) -> Result<(i32, u8, usize)> {
 /// Decodes a PEC stitch stream starting at `data[0]`. Returns the
 /// commands, whether a leading `(0, 0)` pair was skipped, and the
 /// total bytes consumed (including the terminating `0xFF`).
+///
+/// Long-form flag bits outside the documented pair (jump, trim) are
+/// not interpreted; use [`decode`] / [`decode_block`] to have them
+/// reported in [`Design::diagnostics`].
 pub fn decode_stitches(data: &[u8]) -> Result<(Vec<Command>, bool, usize)> {
+    let (commands, leading, used, _) = decode_stitches_diag(data)?;
+    Ok((commands, leading, used))
+}
+
+/// [`decode_stitches`] plus the findings: a long-form axis whose
+/// third flag bit (`0x40`, undocumented) is set is decoded by the
+/// documented jump / trim bits as before and reported.
+pub(crate) fn decode_stitches_diag(
+    data: &[u8],
+) -> Result<(Vec<Command>, bool, usize, Diagnostics)> {
     let mut commands = Vec::new();
+    let mut diagnostics = Diagnostics::default();
     let mut i = 0usize;
     let mut leading = false;
     // The documented ignorable opening (0, 0) pair.
@@ -352,7 +371,7 @@ pub fn decode_stitches(data: &[u8]) -> Result<(Vec<Command>, bool, usize)> {
         if b == 0xFF {
             i += 1;
             commands.push(Command::End);
-            return Ok((commands, leading, i));
+            return Ok((commands, leading, i, diagnostics));
         }
         if b == 0xFE && data.get(i + 1) == Some(&0xB0) {
             let index = *data.get(i + 2).ok_or(Error::UnexpectedEof {
@@ -366,11 +385,22 @@ pub fn decode_stitches(data: &[u8]) -> Result<(Vec<Command>, bool, usize)> {
             });
             continue;
         }
+        let record = i;
         let (dx, fx, nx) = decode_axis(data, i)?;
         i += nx;
         let (dy, fy, ny) = decode_axis(data, i)?;
         i += ny;
         let flags = fx | fy;
+        if flags & FLAG_UNDOCUMENTED != 0 {
+            let at = |k: usize| data.get(record + k).copied().unwrap_or(0);
+            diagnostics.push(
+                "PEC",
+                record,
+                b,
+                [at(1), at(2)],
+                WarningAction::DecodedByRule,
+            );
+        }
         if flags & 0x20 != 0 {
             commands.push(Command::Trim { dx, dy });
         } else if flags & 0x10 != 0 {
@@ -619,7 +649,7 @@ pub fn decode_block(block: &[u8]) -> Result<PecBlock> {
     let width = u16::from_le_bytes([sec2[8], sec2[9]]);
     let height = u16::from_le_bytes([sec2[10], sec2[11]]);
 
-    let (commands, leading, _used) = decode_stitches(&block[STITCH_OFFSET..])?;
+    let (commands, leading, _used, diagnostics) = decode_stitches_diag(&block[STITCH_OFFSET..])?;
 
     let mut thumbnails = Vec::new();
     if thumb_offset >= STITCH_OFFSET {
@@ -657,6 +687,7 @@ pub fn decode_block(block: &[u8]) -> Result<PecBlock> {
             commands,
             threads,
             label: if label.is_empty() { None } else { Some(label) },
+            diagnostics,
         },
         leading_origin_pair: leading,
         layout_bytes: [block[31], block[32], block[33]],
@@ -760,6 +791,7 @@ mod tests {
             ],
             threads: Vec::new(),
             label: None,
+            ..Default::default()
         }
     }
 
@@ -927,6 +959,26 @@ mod tests {
         assert_eq!(p.layout_bytes, [0x00, 0x12, 0x34]);
         assert!(p.has_pe_design_mark());
         assert_eq!(p.design.counts(), d.counts());
+    }
+
+    #[test]
+    fn undocumented_long_form_flag_reported() {
+        // Long-form X with the third flag bit (0x40) set: decoded by
+        // the documented bits as before, but reported.
+        let (commands, _, used, diag) = decode_stitches_diag(&[0xC0, 0x05, 0x03, 0xFF]).unwrap();
+        assert_eq!(used, 4);
+        assert_eq!(commands[0], Command::Stitch { dx: 5, dy: 3 });
+        let w = diag.warnings();
+        assert_eq!(w.len(), 1);
+        assert_eq!((w[0].format, w[0].offset, w[0].code), ("PEC", 0, 0xC0));
+        assert_eq!(w[0].payload, [0x05, 0x03]);
+        // The documented jump / trim flags stay clean.
+        let (_, _, _, diag) =
+            decode_stitches_diag(&[0x90, 0x05, 0x03, 0xA0, 0x05, 0xA0, 0x01, 0xFF]).unwrap();
+        assert!(diag.is_empty());
+        // The encoder never emits the undocumented bit.
+        let block = encode_block(&sample_design(), &PecEncodeOptions::default()).unwrap();
+        assert!(decode_block(&block).unwrap().design.diagnostics.is_empty());
     }
 
     #[test]

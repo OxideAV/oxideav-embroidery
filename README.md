@@ -45,7 +45,7 @@ crate (its own CI leg keeps that path green).
 | Brother PHC | ✅ | — | Validated container layout; PEC stream at the structural offset (`259 + 230 × colours` at standard geometry). No encode: the 163-byte design-record core is undocumented |
 | Brother PHB | ✅ | — | PHC's multi-design sibling: second copyright string, body shifted +36, 9-byte design-record head (design count is a documented hint, not proven), PEC stream at `259 + 230 × colours + 45` |
 | Brother PHX | ◐ | — | Best-effort decode per the staged vendor-reader analysis; **no real `.phx` sample exists anywhere**, so the parser is unvalidated by design |
-| Melco EXP | ✅ | ✅ | Headerless stitch list + `.inf` colour companion (decode + encode, both corpus record-area conventions); corpus-pinned `80 04` jump escape |
+| Melco EXP | ✅ | ✅ | Headerless stitch list + `.inf` colour companion (decode + encode, both corpus record-area conventions); corpus-pinned `80 01` colour change and `80 04` jump; control codes without file evidence are reported, and the even ones (`80 80` included) never move the needle — see [Control codes without evidence](#control-codes-without-evidence). No trim record is written: no staged file shows one |
 | `.col` companion | ✅ | ✅ | Plain-text colour list (count line + `index,R,G,B` records); corpus-validated to carry the same RGBs as the `.inf` sibling |
 | `.edr` companion | ✅ | ✅ | 4-byte RGB records closed by the `FF FF FF 00` sentinel; corpus-validated against `.col`/`.inf` siblings |
 | Janome JEF | ✅ | ✅ | Validated header, colour table, `80 01/02/10` escapes; corpus-pinned extents order and second-array value |
@@ -63,6 +63,35 @@ modules (the framework demuxer applies a validated-walk fallback for
 `.exp`); ART cannot even be that (no structural fact about it is
 documented anywhere), so its module only recognises the extension
 family.
+
+## Control codes without evidence
+
+A control code a decoder has no file evidence for is never silently
+turned into needle movement. Every decode is **lenient** by default
+and lists what it met in `Design::diagnostics`; `DecodeOptions::strict()`
+(through `decode_with`, `exp::decode_with`, or `DecodeOptions::check`
+after any per-format decode) turns the first finding into
+`Error::UnknownControl { format, code, offset }`.
+
+| Format | Evidence-backed vocabulary | Anything else |
+| ------ | -------------------------- | ------------- |
+| EXP | `80 01` colour change, `80 04` jump (the only records in the corpus: 43 and 938 over 9 files) | `80 02` and other odd codes: decoded by the documented rule, reported. Other even codes (`80 80` …): consumed, **no command, no movement**, reported |
+| DST | byte-3 bit 7 = jump, bits 7 + 6 = colour change, `00 00 F3` = end, low two bits set | bit 6 alone, or low bits clear: movement per the ternary table as before, reported |
+| PEC (PES / PHC / PHB / PHX) | long-form jump and trim flags, `FE B0` colour change, `FF` end | third long-form flag bit: decoded by the documented bits, reported |
+| HUS / VIP | attribute bytes `80 81 84 88 90` | record skipped (fixed-width records keep the stream in step), reported |
+| JEF | `80 01`, `80 02`, `80 10` | typed error in every mode — the record length of an unknown escape is undocumented |
+
+Every corpus file and every stitch-bearing redistributable fixture
+decodes strict-clean.
+
+**EXP trims.** The staged corpus cannot say what a trim looks like in
+EXP: its EXP files are record-identical to their HUS siblings once the
+HUS trim records are dropped (8 sibling pairs, 60 HUS trims, zero
+needle drift across 238k+ records) — that producer writes nothing into
+EXP where HUS carries a trim. No staged file holds an `80 80` record,
+so the decoder assigns it no meaning (it is skipped and reported, as
+above) and the encoder keeps expressing `Command::Trim` as an `80 04`
+jump.
 
 ## Validation
 
@@ -99,7 +128,8 @@ covers them two ways:
   | XXX (Premier+, Wilcom, open-source writer, Wings XP paletteless, a test set, a real design) | 19 | escape form + offset, colour count, slot 0, filler run, slot 20, terminator, trailer length; parse → write byte-exact (19 / 19); writer's block from the used slots alone equals the file's (10 / 10 zero-filler files) | 19 / 19 |
   | **Total** | **80** | | **80 / 80** |
 
-- **Fuzzing** (`fuzz/`, libFuzzer): hostile raw GL bitstreams, a
+- **Fuzzing** (`fuzz/`, libFuzzer): the EXP decoder with its
+  no-movement and strict / lenient agreement properties, hostile raw GL bitstreams, a
   structure-aware GL round-trip property over both encoders and
   every window level, every public decode entry point plus the
   framework demuxer, and a structured HUS/VIP container target that

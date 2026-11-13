@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 use oxideav_embroidery::pec::{self, PecEncodeOptions, PecLayout};
 use oxideav_embroidery::xxx::{self, PaletteEscape};
-use oxideav_embroidery::{Command, Design, gl, hus, pes};
+use oxideav_embroidery::{Command, DecodeOptions, Design, gl, hus, pes};
 
 fn fixtures_root() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("OXIDEAV_EMBROIDERY_FIXTURES") {
@@ -602,5 +602,30 @@ fn xxx_fixtures_decode_to_notes() {
     if checked > 0 {
         assert_eq!(checked, 19, "expected all 19 staged XXX fixtures");
         assert_eq!(reemitted, 10, "Wilcom + open-source-writer files");
+    }
+}
+
+/// Every stitch-bearing fixture decodes without a decode warning:
+/// no staged file from any producer leaves the evidence-backed
+/// control vocabulary (HUS attribute bytes, PEC long-form flags).
+#[test]
+fn fixtures_are_strict_clean() {
+    let mut checked = 0usize;
+    for format in ["hus", "pes"] {
+        for dir in fixture_dirs(format) {
+            for path in data_files(&dir) {
+                let data = std::fs::read(&path).unwrap();
+                if oxideav_embroidery::probe(&data).is_none() {
+                    continue;
+                }
+                let (_, design) = oxideav_embroidery::decode_with(&data, &DecodeOptions::strict())
+                    .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                assert!(design.diagnostics.is_empty());
+                checked += 1;
+            }
+        }
+    }
+    if fixtures_root().is_some() {
+        assert!(checked >= 60, "only {checked} fixtures checked");
     }
 }
