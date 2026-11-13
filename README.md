@@ -147,6 +147,29 @@ pair and its producer-dependent width/height field (span, span + 1,
 hoop size or zero), the JEF second-array semantics, and everything listed under
 each module's "unvalidated" caveats.
 
+## Throughput
+
+Single thread, release build, `cargo run --release --example throughput`
+(median of 9 runs per row on an Apple-silicon laptop shared with other
+builds — indicative, not a benchmark suite). Million records per
+second on a synthetic 1 000 001-record, 8-colour design; output is
+byte-identical before and after.
+
+| Format | Decode before → after | Encode before → after | What changed |
+| ------ | --------------------- | --------------------- | ------------ |
+| EXP | 743 → 1 690 | 441 → 425 | one exact allocation for the command list |
+| DST | 315 → 556 | 45 → 297 | per-byte movement tables and per-axis record tables built at compile time from the one ternary bit table (was a digit loop per axis per record); one extents pass instead of three walks; header and body in one buffer |
+| JEF | 653 → 576 | 294 → 278 | (reserved capacity only; within run-to-run noise) |
+| PEC | 487 → 722 | 54 → 165 | every thumbnail rendered in one walk of the design (was one walk per colour block plus one) |
+| PES | 505 → 597 | 56 → 168 | as PEC |
+| HUS | 64 → 90 | 84 → 102 | GL symbols decoded through a 10-bit prefix table (was one bit at a time); literal streams coded straight from their bytes |
+| VIP | 62 → 88 | 81 → 103 | as HUS |
+
+On the staged corpus (decode only, median of 3 runs of the same
+example with the corpus directory as argument): DST 333 → 462,
+EXP 959 → 1 451, HUS 43 → 63, VIP 43 → 68 M records/s; PEC / PES /
+PHC / PHB / JEF unchanged within noise.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

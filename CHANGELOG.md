@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Throughput (output byte-identical): DST encode 45 → 297 M records/s and decode 315 → 556 (compile-time movement / record tables derived from the single ternary bit table, one extents pass, one buffer); PEC / PES encode 54 → 165 (all thumbnails rendered in one walk of the design); HUS / VIP decode 64 → 90 (10-bit prefix-table GL symbol decode) and encode 84 → 102 (literal streams coded without a token list); EXP decode 743 → 1 690 (exact allocation). `examples/throughput.rs` measures every format on a synthetic design and on a directory of real files.
 - `#[non_exhaustive]`: the model records `Design`, `Thread` and `Counts`; the encode options `DstEncodeOptions`, `HusEncodeOptions`, `JefEncodeOptions` and `PecEncodeOptions`; the parsed file records `DstHeader`, `DstFile`, `HusFile`, `HusDecoded`, `JefFile`, `PecBlock`, `PesFile`, `PhcFile`, `PhbFile`, `PhxFile`, `Vp3File` and `XxxFile`. Code outside the crate builds the model and option records with `Default` plus the `with_*` setters. `Extents` (a bounding box) and the palette entries `ThreadColor` / `PhxColor` are unchanged.
 - `#[doc(hidden)]`: the `gl` stream-compressor module (still `pub` for tests and fuzz).
 
