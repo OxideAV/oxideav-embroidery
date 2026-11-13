@@ -270,140 +270,135 @@ pub fn decode(data: &[u8]) -> Result<DstFile> {
     })
 }
 
+/// The ternary bit table: `(byte, bit mask, x weight, y weight)` for
+/// each of the twenty movement bits of a record.
+const MOVE_BITS: [(usize, u8, i8, i8); 20] = [
+    // byte 1: y±1, y±9, x∓9, x∓1
+    (0, 0x80, 0, 1),
+    (0, 0x40, 0, -1),
+    (0, 0x20, 0, 9),
+    (0, 0x10, 0, -9),
+    (0, 0x08, -9, 0),
+    (0, 0x04, 9, 0),
+    (0, 0x02, -1, 0),
+    (0, 0x01, 1, 0),
+    // byte 2: the same pattern ×3
+    (1, 0x80, 0, 3),
+    (1, 0x40, 0, -3),
+    (1, 0x20, 0, 27),
+    (1, 0x10, 0, -27),
+    (1, 0x08, -27, 0),
+    (1, 0x04, 27, 0),
+    (1, 0x02, -3, 0),
+    (1, 0x01, 3, 0),
+    // byte 3: y±81 (bits 5/4), x∓81 (bits 3/2)
+    (2, 0x20, 0, 81),
+    (2, 0x10, 0, -81),
+    (2, 0x08, -81, 0),
+    (2, 0x04, 81, 0),
+];
+
+/// Per record byte position and byte value, the `(x, y)` movement
+/// that byte contributes — [`MOVE_BITS`] summed over the set bits.
+const BYTE_MOVES: [[(i8, i8); 256]; 3] = {
+    let mut table = [[(0i8, 0i8); 256]; 3];
+    let mut value = 0usize;
+    while value < 256 {
+        let mut k = 0usize;
+        while k < MOVE_BITS.len() {
+            let (byte, mask, wx, wy) = MOVE_BITS[k];
+            if value as u8 & mask != 0 {
+                table[byte][value].0 += wx;
+                table[byte][value].1 += wy;
+            }
+            k += 1;
+        }
+        value += 1;
+    }
+    table
+};
+
 /// Decodes the x/y delta of one 3-byte record per the ternary bit
 /// table.
 fn decode_delta(b1: u8, b2: u8, b3: u8) -> (i32, i32) {
-    let mut x = 0i32;
-    let mut y = 0i32;
-    // byte 1: y±1 (bits 7/6), y±9 (5/4), x∓9 (3/2 = −9/+9), x∓1 (1/0 = −1/+1)
-    if b1 & 0x80 != 0 {
-        y += 1;
-    }
-    if b1 & 0x40 != 0 {
-        y -= 1;
-    }
-    if b1 & 0x20 != 0 {
-        y += 9;
-    }
-    if b1 & 0x10 != 0 {
-        y -= 9;
-    }
-    if b1 & 0x08 != 0 {
-        x -= 9;
-    }
-    if b1 & 0x04 != 0 {
-        x += 9;
-    }
-    if b1 & 0x02 != 0 {
-        x -= 1;
-    }
-    if b1 & 0x01 != 0 {
-        x += 1;
-    }
-    // byte 2: same pattern ×3
-    if b2 & 0x80 != 0 {
-        y += 3;
-    }
-    if b2 & 0x40 != 0 {
-        y -= 3;
-    }
-    if b2 & 0x20 != 0 {
-        y += 27;
-    }
-    if b2 & 0x10 != 0 {
-        y -= 27;
-    }
-    if b2 & 0x08 != 0 {
-        x -= 27;
-    }
-    if b2 & 0x04 != 0 {
-        x += 27;
-    }
-    if b2 & 0x02 != 0 {
-        x -= 3;
-    }
-    if b2 & 0x01 != 0 {
-        x += 3;
-    }
-    // byte 3: y±81 (bits 5/4), x∓81 (3/2)
-    if b3 & 0x20 != 0 {
-        y += 81;
-    }
-    if b3 & 0x10 != 0 {
-        y -= 81;
-    }
-    if b3 & 0x08 != 0 {
-        x -= 81;
-    }
-    if b3 & 0x04 != 0 {
-        x += 81;
-    }
-    (x, y)
+    let (x1, y1) = BYTE_MOVES[0][b1 as usize];
+    let (x2, y2) = BYTE_MOVES[1][b2 as usize];
+    let (x3, y3) = BYTE_MOVES[2][b3 as usize];
+    (
+        x1 as i32 + x2 as i32 + x3 as i32,
+        y1 as i32 + y2 as i32 + y3 as i32,
+    )
 }
 
 /// Balanced-ternary digits (−1/0/+1) for weights 1, 3, 9, 27, 81.
 /// Unique for every value in [−121, 121].
-fn trits(mut v: i32) -> [i8; 5] {
-    debug_assert!((-121..=121).contains(&v));
+const fn trits(mut v: i32) -> [i8; 5] {
     let mut t = [0i8; 5];
-    for d in &mut t {
+    let mut k = 0usize;
+    while k < 5 {
         let r = v.rem_euclid(3);
         if r == 2 {
-            *d = -1;
+            t[k] = -1;
             v = (v + 1) / 3;
         } else {
-            *d = r as i8;
+            t[k] = r as i8;
             v = (v - r) / 3;
         }
+        k += 1;
     }
     t
 }
 
+/// The three record bytes carrying a single-axis delta: the bit of
+/// [`MOVE_BITS`] with weight `digit × 3^k` set for every non-zero
+/// balanced-ternary digit of the delta.
+const fn axis_bytes(delta: i32, x_axis: bool) -> [u8; 3] {
+    let digits = trits(delta);
+    let mut bytes = [0u8; 3];
+    let mut weight = 1i8;
+    let mut k = 0usize;
+    while k < 5 {
+        if digits[k] != 0 {
+            let want = digits[k] * weight;
+            let mut m = 0usize;
+            while m < MOVE_BITS.len() {
+                let (byte, mask, wx, wy) = MOVE_BITS[m];
+                if (x_axis && wx == want) || (!x_axis && wy == want) {
+                    bytes[byte] |= mask;
+                }
+                m += 1;
+            }
+        }
+        if k < 4 {
+            weight *= 3;
+        }
+        k += 1;
+    }
+    bytes
+}
+
+/// Record bytes per axis delta, indexed by `delta + MAX_DELTA`.
+const AXIS_TABLE_LEN: usize = 2 * MAX_DELTA as usize + 1;
+const fn axis_table(x_axis: bool) -> [[u8; 3]; AXIS_TABLE_LEN] {
+    let mut table = [[0u8; 3]; AXIS_TABLE_LEN];
+    let mut i = 0usize;
+    while i < AXIS_TABLE_LEN {
+        table[i] = axis_bytes(i as i32 - MAX_DELTA, x_axis);
+        i += 1;
+    }
+    table
+}
+const X_BYTES: [[u8; 3]; AXIS_TABLE_LEN] = axis_table(true);
+const Y_BYTES: [[u8; 3]; AXIS_TABLE_LEN] = axis_table(false);
+
 /// Encodes one record's delta into the three record bytes (control
 /// bits not included).
 fn encode_delta(dx: i32, dy: i32) -> (u8, u8, u8) {
-    let tx = trits(dx);
-    let ty = trits(dy);
-    let (mut b1, mut b2, mut b3) = (0u8, 0u8, 0u8);
-    // (trit index, plus-bit, minus-bit) per byte, x axis
-    for (ti, byte, plus, minus) in [
-        (0, 1, 0x01u8, 0x02u8),
-        (1, 2, 0x01, 0x02),
-        (2, 1, 0x04, 0x08),
-        (3, 2, 0x04, 0x08),
-        (4, 3, 0x04, 0x08),
-    ] {
-        let bit = match tx[ti] {
-            1 => plus,
-            -1 => minus,
-            _ => 0,
-        };
-        match byte {
-            1 => b1 |= bit,
-            2 => b2 |= bit,
-            _ => b3 |= bit,
-        }
-    }
-    // y axis
-    for (ti, byte, plus, minus) in [
-        (0, 1, 0x80u8, 0x40u8),
-        (1, 2, 0x80, 0x40),
-        (2, 1, 0x20, 0x10),
-        (3, 2, 0x20, 0x10),
-        (4, 3, 0x20, 0x10),
-    ] {
-        let bit = match ty[ti] {
-            1 => plus,
-            -1 => minus,
-            _ => 0,
-        };
-        match byte {
-            1 => b1 |= bit,
-            2 => b2 |= bit,
-            _ => b3 |= bit,
-        }
-    }
-    (b1, b2, b3)
+    debug_assert!((-MAX_DELTA..=MAX_DELTA).contains(&dx));
+    debug_assert!((-MAX_DELTA..=MAX_DELTA).contains(&dy));
+    let x = X_BYTES[(dx + MAX_DELTA) as usize];
+    let y = Y_BYTES[(dy + MAX_DELTA) as usize];
+    (x[0] | y[0], x[1] | y[1], x[2] | y[2])
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -460,7 +455,10 @@ pub fn encode(design: &Design, options: &DstEncodeOptions) -> Result<Vec<u8>> {
             field: "DST extents (header fields are 5 digits)",
         });
     }
-    let mut body = Vec::new();
+    // One allocation for header + body; a record per command is the
+    // common case (long moves and trim runs grow it).
+    let mut body = Vec::with_capacity(HEADER_LEN + 3 * design.commands.len() + 3);
+    body.resize(HEADER_LEN, b' ');
     let mut records = 0usize;
     let mut color_changes = 0usize;
     let mut ended = false;
@@ -498,8 +496,13 @@ pub fn encode(design: &Design, options: &DstEncodeOptions) -> Result<Vec<u8>> {
     body.extend_from_slice(&[0x00, 0x00, 0xF3]);
     records += 1;
 
-    let e = design.extents();
-    let end = design.positions().last().copied().unwrap_or((0, 0));
+    // The pre-check's extents are the design's; the needle end
+    // point is the sum of all deltas (in range per that check).
+    let e = pre;
+    let end = design.commands.iter().fold((0i32, 0i32), |(x, y), c| {
+        let (dx, dy) = c.delta();
+        (x + dx, y + dy)
+    });
     let mut header = Vec::with_capacity(HEADER_LEN);
     header.extend_from_slice(format!("LA:{:<16}\r", options.label).as_bytes());
     header.extend_from_slice(format!("ST:{records:7}\r").as_bytes());
@@ -518,11 +521,8 @@ pub fn encode(design: &Design, options: &DstEncodeOptions) -> Result<Vec<u8>> {
     header.extend_from_slice(b"PD:******\r");
     debug_assert_eq!(header.len(), 124);
     header.push(0x1A);
-    header.resize(HEADER_LEN, b' ');
-
-    let mut out = header;
-    out.extend_from_slice(&body);
-    Ok(out)
+    body[..header.len()].copy_from_slice(&header);
+    Ok(body)
 }
 
 #[cfg(test)]
