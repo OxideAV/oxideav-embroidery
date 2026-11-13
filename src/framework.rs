@@ -193,6 +193,15 @@ impl EmbroideryDemuxer {
         if let Some(l) = &design.label {
             metadata.push(("title".to_string(), l.clone()));
         }
+        // Records outside the evidence-backed vocabulary of the
+        // format (see `Design::diagnostics`) are reported here too,
+        // so the framework path is never silent about them.
+        if !design.diagnostics.is_empty() {
+            metadata.push((
+                "decode_warnings".to_string(),
+                design.diagnostics.total().to_string(),
+            ));
+        }
         let params = CodecParameters::data(CodecId::new(NAME));
         let streams = vec![StreamInfo {
             index: 0,

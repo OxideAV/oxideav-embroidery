@@ -24,6 +24,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - Decode diagnostics: `Design::diagnostics` (`Diagnostics`, `DecodeWarning`, `WarningAction::{Skipped, DecodedByRule}`; at most 64 warnings kept in detail, all counted), `DecodeOptions` (`new` / `strict` / `with_strict` / `check`), `decode_with`, `exp::decode_with`, and `Error::UnknownControl { format, code, offset }` for strict decodes.
+- Framework demuxer: a `decode_warnings` container-metadata entry (the warning count) whenever a decode met such records.
 - Tests: the EXP control-record tally of the corpus against its HUS siblings (zero needle drift with the HUS-only trims dropped), strict-clean decode of every corpus and fixture file, a property test that unevidenced EXP controls never move the needle; fuzz target `exp_decode`, and the strict / lenient agreement property in `decode_any`.
 - `with_*` setters for every field of `Design`, `Thread`, `DstEncodeOptions`, `HusEncodeOptions`, `JefEncodeOptions` and `PecEncodeOptions`.
 - HUS: the second documented magic `0x00C8FC5D` (`hus::MAGIC_FC5D`, `HUS_MAGICS`), `HusFile::magic`, `HusEncodeOptions::magic` / `with_magic`; streams without an end-of-design record decode; `HusFile::vip_record`.

@@ -3,7 +3,7 @@
 
 use std::io::Cursor;
 
-use oxideav_core::registry::{Decoder, MAX_PROBE_SCORE, PROBE_SCORE_EXTENSION, ProbeData};
+use oxideav_core::registry::{Decoder, Demuxer, MAX_PROBE_SCORE, PROBE_SCORE_EXTENSION, ProbeData};
 use oxideav_core::{Error as CoreError, Frame, MediaType, NullCodecResolver, RuntimeContext};
 use oxideav_embroidery::framework::{self, EmbroideryDecoder};
 use oxideav_embroidery::{Command, Design, Thread, dst, hus, pec};
@@ -82,7 +82,25 @@ fn registry_probes_and_demuxes_every_encodable_format() {
         assert_eq!(get("embroidery_format"), Some(ext));
         assert_eq!(get("stitches"), Some("3"));
         assert_eq!(get("color_blocks"), Some("2"));
+        // A clean decode carries no warning entry.
+        assert_eq!(get("decode_warnings"), None);
     }
+}
+
+/// A design whose stream holds records outside the evidence-backed
+/// vocabulary still opens, and the demuxer reports how many it met.
+#[test]
+fn decode_warnings_surface_as_container_metadata() {
+    let mut bytes = dst::encode(&sample_design(), &dst::DstEncodeOptions::default()).unwrap();
+    // Bit 6 without bit 7 on the first record's control byte.
+    bytes[514] = (bytes[514] & 0x3F) | 0x40;
+    let demuxer = oxideav_embroidery::framework::EmbroideryDemuxer::from_bytes(bytes).unwrap();
+    let warnings = demuxer
+        .metadata()
+        .iter()
+        .find(|(k, _)| k == "decode_warnings")
+        .map(|(_, v)| v.as_str());
+    assert_eq!(warnings, Some("1"));
 }
 
 #[test]
