@@ -23,9 +23,9 @@ pub enum Command {
     /// A jump: move the needle without sewing.
     Jump { dx: i32, dy: i32 },
     /// A trim: cut the thread, optionally moving. Formats without a
-    /// documented trim record (DST, EXP, JEF) express trims as jump
-    /// conventions; PEC carries an explicit trim flag and HUS an
-    /// explicit trim attribute.
+    /// documented trim record (DST, JEF) express trims as jump
+    /// conventions; PEC carries an explicit trim flag, HUS an
+    /// explicit trim attribute and EXP a movement-free trim record.
     Trim { dx: i32, dy: i32 },
     /// A colour change (which also stops the machine so the operator
     /// or changer can switch thread). `index` preserves the byte some

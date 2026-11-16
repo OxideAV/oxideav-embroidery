@@ -3,9 +3,10 @@
 //!
 //! - lenient and strict decode agree: strict succeeds exactly when
 //!   the lenient decode raised no warning, with the same commands;
-//! - an unevidenced even control code never moves the needle: the
-//!   needle path equals the one integrated from the raw records with
-//!   those records dropped;
+//! - neither the trim record (`80 80 07 00`) nor an unevidenced even
+//!   control code moves the needle: the needle path equals the one
+//!   integrated from the raw records with those records dropped, and
+//!   the trim count equals the number of trim records;
 //! - re-encoding the decoded design yields a strict-clean stream
 //!   ending at the same needle position.
 
@@ -29,12 +30,15 @@ fuzz_target!(|data: &[u8]| {
     assert!(design.diagnostics.warnings().len() <= design.diagnostics.total());
 
     // Independent walk of the raw records.
-    let (mut x, mut y, mut skipped) = (0i64, 0i64, 0usize);
+    let (mut x, mut y, mut skipped, mut trims) = (0i64, 0i64, 0usize, 0usize);
     let mut i = 0usize;
     while i < data.len() {
         let (dx, dy, len) = if data[i] == 0x80 {
             let code = data[i + 1];
-            if code.is_multiple_of(2) && code != 0x02 && code != 0x04 {
+            if code == 0x80 && data[i + 2..i + 4] == [0x07, 0x00] {
+                trims += 1;
+                (0, 0, 4)
+            } else if code.is_multiple_of(2) && code != 0x02 && code != 0x04 {
                 skipped += 1;
                 (0, 0, 4)
             } else {
@@ -50,6 +54,7 @@ fuzz_target!(|data: &[u8]| {
     let end = design.positions().last().copied().unwrap_or((0, 0));
     assert_eq!((end.0 as i64, end.1 as i64), (x, y));
     assert!(skipped <= design.diagnostics.total());
+    assert_eq!(design.counts().trims, trims);
     if design.diagnostics.total() <= oxideav_embroidery::Diagnostics::MAX_RECORDED {
         let listed = design
             .diagnostics
@@ -67,5 +72,6 @@ fuzz_target!(|data: &[u8]| {
     };
     let again = exp::decode_with(&bytes, &DecodeOptions::strict()).unwrap();
     assert_eq!(again.positions().last().copied().unwrap_or((0, 0)), end);
+    assert_eq!(again.counts().trims, trims);
     assert!(matches!(again.commands.last(), Some(Command::End)));
 });

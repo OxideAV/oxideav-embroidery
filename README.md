@@ -45,7 +45,7 @@ crate (its own CI leg keeps that path green).
 | Brother PHC | ✅ | — | Validated container layout; PEC stream at the structural offset (`259 + 230 × colours` at standard geometry). No encode: the 163-byte design-record core is undocumented |
 | Brother PHB | ✅ | — | PHC's multi-design sibling: second copyright string, body shifted +36, 9-byte design-record head (design count is a documented hint, not proven), PEC stream at `259 + 230 × colours + 45` |
 | Brother PHX | ◐ | — | Best-effort decode per the staged vendor-reader analysis; **no real `.phx` sample exists anywhere**, so the parser is unvalidated by design |
-| Melco EXP | ✅ | ✅ | Headerless stitch list + `.inf` colour companion (decode + encode, both corpus record-area conventions); corpus-pinned `80 01` colour change and `80 04` jump; control codes without file evidence are reported, and the even ones (`80 80` included) never move the needle — see [Control codes without evidence](#control-codes-without-evidence). No trim record is written: no staged file shows one |
+| Melco EXP | ✅ | ✅ | Headerless stitch list + `.inf` colour companion (decode + encode, both corpus record-area conventions); corpus-pinned `80 01` colour change and `80 04` jump, fixture-pinned movement-free trim record `80 80 07 00` (read and written; `ExpEncodeOptions::with_trim_records(false)` writes trims as bare jumps); control codes without file evidence are reported, and the even ones never move the needle — see [Control codes without evidence](#control-codes-without-evidence) |
 | `.col` companion | ✅ | ✅ | Plain-text colour list (count line + `index,R,G,B` records); corpus-validated to carry the same RGBs as the `.inf` sibling |
 | `.edr` companion | ✅ | ✅ | 4-byte RGB records closed by the `FF FF FF 00` sentinel; corpus-validated against `.col`/`.inf` siblings |
 | Janome JEF | ✅ | ✅ | Validated header, colour table, `80 01/02/10` escapes; corpus-pinned extents order and second-array value |
@@ -75,7 +75,7 @@ after any per-format decode) turns the first finding into
 
 | Format | Evidence-backed vocabulary | Anything else |
 | ------ | -------------------------- | ------------- |
-| EXP | `80 01` colour change, `80 04` jump (the only records in the corpus: 43 and 938 over 9 files) | `80 02` and other odd codes: decoded by the documented rule, reported. Other even codes (`80 80` …): consumed, **no command, no movement**, reported |
+| EXP | `80 01` colour change, `80 04` jump (the only records in the corpus: 43 and 938 over 9 files), `80 80 07 00` trim without movement (21 records over the 2 trim fixtures) | `80 02` and other odd codes: decoded by the documented rule, reported. Other even codes, and `80 80` with any payload other than `07 00`: consumed, **no command, no movement**, reported |
 | DST | byte-3 bit 7 = jump, bits 7 + 6 = colour change, `00 00 F3` = end, low two bits set | bit 6 alone, or low bits clear: movement per the ternary table as before, reported |
 | PEC (PES / PHC / PHB / PHX) | long-form jump and trim flags, `FE B0` colour change, `FF` end | third long-form flag bit: decoded by the documented bits, reported |
 | HUS / VIP | attribute bytes `80 81 84 88 90` | record skipped (fixed-width records keep the stream in step), reported |
@@ -84,14 +84,31 @@ after any per-format decode) turns the first finding into
 Every corpus file and every stitch-bearing redistributable fixture
 decodes strict-clean.
 
-**EXP trims.** The staged corpus cannot say what a trim looks like in
-EXP: its EXP files are record-identical to their HUS siblings once the
-HUS trim records are dropped (8 sibling pairs, 60 HUS trims, zero
-needle drift across 238k+ records) — that producer writes nothing into
-EXP where HUS carries a trim. No staged file holds an `80 80` record,
-so the decoder assigns it no meaning (it is skipped and reported, as
-above) and the encoder keeps expressing `Command::Trim` as an `80 04`
-jump.
+**EXP trims.** A trim is the 4-byte record `80 80 07 00`: the thread
+is cut at the current needle position and the needle does not move.
+This is pinned by `tests/fixtures/exp_trim/` — one purpose-made design
+written as EXP and as PEC by two unrelated producers, contributed by
+the reporter of the record:
+
+- `80 80` occurs 11 + 10 times in the two EXP files, always with the
+  payload `07 00`; each sits at the needle position where the PEC
+  rendering of the same design starts a trim-flagged move.
+- The payload is not a displacement. With it ignored, both EXP files
+  and both PEC files sew the same 271 points, and the EXP file that
+  travels home ends on `(0, 0)` exactly; read as a move it would be
+  77 units off.
+- The travel to the next block follows the trim as `80 04` jumps, so
+  an EXP trim decodes as `Trim { dx: 0, dy: 0 }` followed by `Jump`s
+  where PEC yields one `Trim` carrying the displacement.
+
+The writer emits the same form (`Trim { dx, dy }` → `80 80 07 00`,
+then `80 04` jumps for a non-zero displacement); both fixtures are
+byte-exact fixed points of decode → encode. The older staged corpus
+comes from a producer that puts nothing into EXP where its HUS
+sibling carries a trim (8 sibling pairs, 60 HUS trims, zero needle
+drift across 238k+ records); `ExpEncodeOptions::with_trim_records(false)`
+writes that shape. `80 80` with any other payload has no file
+evidence: it is skipped and reported, as above.
 
 ## Validation
 

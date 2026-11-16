@@ -188,8 +188,8 @@ fn extents_saturate_instead_of_overflowing() {
 }
 
 /// EXP over random record streams dense in control escapes: strict
-/// and lenient decodes agree, and a control code without file
-/// evidence never moves the needle — the decoded end position equals
+/// and lenient decodes agree, and neither the trim record nor a
+/// control code without file evidence moves the needle — the decoded end position equals
 /// an independent walk of the raw records with those records dropped.
 #[test]
 fn exp_unevidenced_controls_never_move_the_needle() {
@@ -221,6 +221,9 @@ fn exp_unevidenced_controls_never_move_the_needle() {
             if code % 2 == 1 || code == 0x02 || code == 0x04 {
                 x += data[i + 2] as i8 as i32;
                 y += data[i + 3] as i8 as i32;
+            } else if code == 0x80 && data[i + 2..i + 4] == [0x07, 0x00] {
+                // The pinned trim record: evidence-backed, and it
+                // carries no movement either.
             } else {
                 skipped += 1;
             }

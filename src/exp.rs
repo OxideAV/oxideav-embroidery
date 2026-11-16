@@ -15,7 +15,9 @@
 //! | `80 04` | jump, payload = move | corpus (938 records over 9 files; record-identical to the HUS siblings) |
 //! | `80 02` | jump, payload = move | the Grade-A table's worked example only; never seen in a staged file, so flagged |
 //! | other odd | colour change, payload = move | the documented general rule only (both staged descriptions agree); flagged |
-//! | other even (incl. `80 80`) | **skipped — no command, no movement** | none: the staged descriptions disagree (jump / stop / end) and no staged file carries one |
+//! | `80 80 07 00` | trim, **no movement** (the payload is not a move) | the trim fixtures (21 records over 2 files from 2 writers, each at the needle position where the PEC rendering of the same design carries its trim) |
+//! | `80 80`, other payload | **skipped — no command, no movement** | none: every observed trim record carries the payload `07 00` |
+//! | other even | **skipped — no command, no movement** | none: the staged descriptions disagree (jump / stop / end) and no staged file carries one |
 //!
 //! "Flagged" and "skipped" records are recorded in
 //! [`Design::diagnostics`]; [`decode_with`] under strict options
@@ -24,13 +26,31 @@
 //! payload is not a move, treating it as one shifts every later
 //! stitch of the design.
 //!
-//! The staged corpus cannot say what an EXP trim looks like: its
-//! EXP files are record-identical to their HUS siblings *after
-//! dropping the HUS trim records*, i.e. that producer writes no trim
-//! record into EXP at all. The encoder therefore still expresses
-//! [`Command::Trim`] as an `80 04` jump. There is **no end-of-design
-//! escape** in the corpus — files simply end — so decode runs to
-//! end of input.
+//! # Trims
+//!
+//! Two files of one purpose-made design (`tests/fixtures/exp_trim/`,
+//! written by two unrelated producers, with PEC renderings of the
+//! same design beside them) pin the trim record: `80 80 07 00`, a
+//! thread cut at the current needle position. The two payload bytes
+//! are constant and are **not** a displacement — read as a move they
+//! would add 7 units per trim, and the file that returns to its
+//! origin would end 77 units away from it, while with the payload
+//! ignored it ends on `(0, 0)` exactly and every stitch block starts
+//! where the PEC rendering starts it. The travel to the next block
+//! follows as ordinary `80 04` jumps (one producer lets the last
+//! leg be a plain stitch record), so the decoder yields
+//! `Trim { dx: 0, dy: 0 }` followed by those jumps, where PEC folds
+//! cut and travel into one trim-flagged move.
+//!
+//! The older staged corpus comes from a producer that writes no trim
+//! record at all (its EXP files are record-identical to their HUS
+//! siblings *after dropping the HUS trim records*). The encoder
+//! writes the pinned record by default — [`Command::Trim`] becomes
+//! `80 80 07 00` plus `80 04` jumps for its displacement — and
+//! [`ExpEncodeOptions::with_trim_records`]`(false)` reproduces that
+//! producer's shape (trims as bare jumps). There is **no
+//! end-of-design escape** in the corpus — files simply end — so
+//! decode runs to end of input.
 //!
 //! EXP ships alongside a `.inf` colour file (159-byte five-colour
 //! sample mapped field-by-field in the staged notes).
@@ -49,6 +69,11 @@ const CODE_COLOR_CHANGE: u8 = 0x01;
 const CODE_JUMP_TABLE_EXAMPLE: u8 = 0x02;
 /// Jump (corpus-pinned).
 const CODE_JUMP: u8 = 0x04;
+/// Trim (fixture-pinned together with [`TRIM_PAYLOAD`]).
+const CODE_TRIM: u8 = 0x80;
+/// The two bytes every observed trim record carries after its code.
+/// They are not a displacement (see the module docs).
+const TRIM_PAYLOAD: [u8; 2] = [0x07, 0x00];
 
 /// Decodes an EXP stitch list (the whole file), leniently: control
 /// codes without file evidence are flagged or skipped as the module
@@ -87,6 +112,7 @@ pub fn decode(data: &[u8]) -> Result<Design> {
                 dy,
                 index: None,
             }),
+            CODE_TRIM if [px, py] == TRIM_PAYLOAD => commands.push(Command::Trim { dx: 0, dy: 0 }),
             CODE_JUMP_TABLE_EXAMPLE => {
                 diagnostics.push("EXP", i, code, [px, py], WarningAction::DecodedByRule);
                 commands.push(Command::Jump { dx, dy });
@@ -137,10 +163,47 @@ fn push_move(out: &mut Vec<u8>, mut dx: i32, mut dy: i32, control: Option<u8>) {
     }
 }
 
-/// Encodes a design as an EXP stitch list. [`Command::Trim`] is
-/// expressed as a jump (no staged file shows an EXP trim record —
-/// see the module docs); [`Command::Stop`] is unsupported.
+/// EXP encoding options.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ExpEncodeOptions {
+    /// Write each [`Command::Trim`] as the pinned `80 80 07 00`
+    /// record followed by `80 04` jumps for its displacement (the
+    /// default). When `false`, a trim is written as bare `80 04`
+    /// jumps and the cut is lost — the shape of producers that put
+    /// no trim record into EXP.
+    pub trim_records: bool,
+}
+
+impl Default for ExpEncodeOptions {
+    fn default() -> Self {
+        Self { trim_records: true }
+    }
+}
+
+impl ExpEncodeOptions {
+    /// The default options (trim records written).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set `trim_records`.
+    pub fn with_trim_records(mut self, trim_records: bool) -> Self {
+        self.trim_records = trim_records;
+        self
+    }
+}
+
+/// Encodes a design as an EXP stitch list with the default options:
+/// [`Command::Trim`] is written as the trim record `80 80 07 00`,
+/// then `80 04` jumps for any displacement it carries;
+/// [`Command::Stop`] is unsupported.
 pub fn encode(design: &Design) -> Result<Vec<u8>> {
+    encode_with(design, &ExpEncodeOptions::default())
+}
+
+/// [`encode`] under explicit options.
+pub fn encode_with(design: &Design, options: &ExpEncodeOptions) -> Result<Vec<u8>> {
     // EXP stores no extents, so there is no format limit to enforce;
     // this implementation cap (±10 m) keeps hostile designs from
     // driving the record-splitting loop unboundedly.
@@ -158,10 +221,20 @@ pub fn encode(design: &Design) -> Result<Vec<u8>> {
     for c in &design.commands {
         match *c {
             Command::Stitch { dx, dy } => push_move(&mut out, dx, dy, None),
-            Command::Jump { dx, dy } | Command::Trim { dx, dy } => {
-                // The corpus-pinned jump escape is `80 04` (`80 02`
-                // never occurs in real files).
-                push_move(&mut out, dx, dy, Some(CODE_JUMP))
+            // The corpus-pinned jump escape is `80 04` (`80 02`
+            // never occurs in real files).
+            Command::Jump { dx, dy } => push_move(&mut out, dx, dy, Some(CODE_JUMP)),
+            Command::Trim { dx, dy } => {
+                if options.trim_records {
+                    out.extend_from_slice(&[ESCAPE, CODE_TRIM]);
+                    out.extend_from_slice(&TRIM_PAYLOAD);
+                    // The record itself never moves the needle.
+                    if (dx, dy) != (0, 0) {
+                        push_move(&mut out, dx, dy, Some(CODE_JUMP));
+                    }
+                } else {
+                    push_move(&mut out, dx, dy, Some(CODE_JUMP));
+                }
             }
             Command::ColorChange { dx, dy, .. } => {
                 push_move(&mut out, dx, dy, Some(CODE_COLOR_CHANGE))
@@ -339,10 +412,11 @@ mod tests {
 
     #[test]
     fn unevidenced_even_code_never_moves_the_needle() {
-        // 80 80 07 00 between two stitches: lenient decode consumes
-        // the record without movement and reports it; strict decode
-        // returns the typed error.
-        let bytes = [10u8, 0, 0x80, 0x80, 0x07, 0x00, 0, 10];
+        // 80 80 with a payload other than the pinned 07 00, between
+        // two stitches: lenient decode consumes the record without
+        // movement and reports it; strict decode returns the typed
+        // error.
+        let bytes = [10u8, 0, 0x80, 0x80, 0x07, 0x01, 0, 10];
         let d = decode(&bytes).unwrap();
         assert_eq!(
             d.commands,
@@ -356,7 +430,7 @@ mod tests {
         let w = d.diagnostics.warnings();
         assert_eq!(w.len(), 1);
         assert_eq!(w[0].format, "EXP");
-        assert_eq!((w[0].code, w[0].offset, w[0].payload), (0x80, 2, [7, 0]));
+        assert_eq!((w[0].code, w[0].offset, w[0].payload), (0x80, 2, [7, 1]));
         assert_eq!(w[0].action, WarningAction::Skipped);
         assert!(matches!(
             decode_with(&bytes, &DecodeOptions::strict()),
@@ -366,7 +440,8 @@ mod tests {
                 offset: 2
             })
         ));
-        // Every other even code outside {02, 04} behaves the same.
+        // Every other even code outside {02, 04} behaves the same
+        // (80 80 with a payload that is not the trim's included).
         for code in (0u8..=0xFE).step_by(2).filter(|c| ![2, 4].contains(c)) {
             let d = decode(&[0x80, code, 9, 9]).unwrap();
             assert_eq!(d.commands, vec![Command::End], "code {code:#04x}");
@@ -376,7 +451,7 @@ mod tests {
 
     #[test]
     fn warning_list_is_bounded_but_counted() {
-        let bytes: Vec<u8> = [0x80u8, 0x80, 7, 0].repeat(1000);
+        let bytes: Vec<u8> = [0x80u8, 0x80, 0, 7].repeat(1000);
         let d = decode(&bytes).unwrap();
         assert_eq!(d.diagnostics.total(), 1000);
         assert_eq!(d.diagnostics.warnings().len(), Diagnostics::MAX_RECORDED);
@@ -430,14 +505,66 @@ mod tests {
     }
 
     #[test]
-    fn trim_encodes_as_jump() {
+    fn trim_record_decodes_without_movement() {
+        // 80 80 07 00 between two stitches: a trim at the needle
+        // position, no displacement, nothing reported, strict-clean.
+        let bytes = [10u8, 0, 0x80, 0x80, 0x07, 0x00, 0, 10];
+        let d = decode_with(&bytes, &DecodeOptions::strict()).unwrap();
+        assert_eq!(
+            d.commands,
+            vec![
+                Command::Stitch { dx: 10, dy: 0 },
+                Command::Trim { dx: 0, dy: 0 },
+                Command::Stitch { dx: 0, dy: 10 },
+                Command::End
+            ]
+        );
+        assert_eq!(d.positions().last(), Some(&(10, 10)));
+        assert!(d.diagnostics.is_empty());
+        // Any other payload under the same code stays unpinned.
+        for payload in [[0u8, 0], [7, 1], [6, 0], [8, 0], [0, 7], [0x87, 0]] {
+            let d = decode(&[0x80, 0x80, payload[0], payload[1]]).unwrap();
+            assert_eq!(d.commands, vec![Command::End], "payload {payload:?}");
+            assert_eq!(d.diagnostics.total(), 1);
+        }
+    }
+
+    #[test]
+    fn trim_encodes_as_record_then_jumps() {
         let d = Design {
-            commands: vec![Command::Trim { dx: 3, dy: 4 }, Command::End],
+            commands: vec![
+                Command::Trim { dx: 0, dy: 0 },
+                Command::Trim { dx: 3, dy: 4 },
+                Command::Trim { dx: 200, dy: 0 },
+                Command::End,
+            ],
             ..Default::default()
         };
         let bytes = encode(&d).unwrap();
-        // Jumps use the corpus-pinned `80 04` escape.
-        assert_eq!(bytes, vec![0x80, 0x04, 3, 4]);
+        assert_eq!(
+            bytes,
+            vec![
+                0x80, 0x80, 7, 0, // cut in place
+                0x80, 0x80, 7, 0, 0x80, 0x04, 3, 4, // cut, then travel
+                0x80, 0x80, 7, 0, 0x80, 0x04, 127, 0, 0x80, 0x04, 73, 0,
+            ]
+        );
+        let got = decode_with(&bytes, &DecodeOptions::strict()).unwrap();
+        assert_eq!(got.counts().trims, 3);
+        assert_eq!(got.counts().jumps, 3);
+        assert_eq!(got.positions().last(), d.positions().last());
+        // Decoded form is a fixed point of the writer.
+        assert_eq!(encode(&got).unwrap(), bytes);
+
+        // Without trim records a trim is bare jumps (a zero-length
+        // one included, as before).
+        let plain = encode_with(&d, &ExpEncodeOptions::new().with_trim_records(false)).unwrap();
+        assert_eq!(
+            plain,
+            vec![
+                0x80, 0x04, 0, 0, 0x80, 0x04, 3, 4, 0x80, 0x04, 127, 0, 0x80, 0x04, 73, 0
+            ]
+        );
     }
 
     #[test]

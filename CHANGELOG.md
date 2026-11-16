@@ -6,7 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- EXP: a control record whose code byte has no file evidence is no longer decoded as a silent jump. Only `80 01` (colour change) and `80 04` (jump) occur in the staged corpus (9 files, 43 + 938 records); `80 02` and the other odd codes still follow the documented rule but are reported, and every other even code — `80 80` included — is consumed with **no command and no needle movement** and reported, so an unknown record can no longer shift the rest of the design.
+- EXP: the trim record `80 80 07 00` is decoded as `Command::Trim { dx: 0, dy: 0 }` — a thread cut with no needle movement — and is strict-clean. Pinned by a purpose-made design contributed by the reporter of the record (`tests/fixtures/exp_trim/`: EXP and PEC renderings from two unrelated producers; 21 trim records, each at the needle position where the PEC rendering trims, payload always `07 00` and demonstrably not a displacement). `80 80` with any other payload stays unevidenced: skipped without movement and reported.
+- EXP: a control record whose code byte has no file evidence is no longer decoded as a silent jump. Only `80 01` (colour change) and `80 04` (jump) occur in the staged corpus (9 files, 43 + 938 records); `80 02` and the other odd codes still follow the documented rule but are reported, and every other even code is consumed with **no command and no needle movement** and reported, so an unknown record can no longer shift the rest of the design.
 - DST: a record with bit 6 but not bit 7 of byte 3, or without the two always-set low bits, is reported instead of passing as an ordinary stitch (its movement, defined by the ternary table, is unchanged).
 - PEC (and PES / PHC / PHB / PHX through it): a long-form axis with the undocumented third flag bit (`0x40`) is reported.
 - HUS / VIP: an attribute byte outside the five corpus-validated values is skipped and reported (it used to fail the whole decode with `Error::Invalid`).
@@ -14,6 +15,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- EXP writer: `Command::Trim` is written as the trim record `80 80 07 00` followed by `80 04` jumps for its displacement (it used to be a bare `80 04` jump, which lost the cut). `exp::encode_with` with `ExpEncodeOptions::with_trim_records(false)` keeps the former output.
 - Throughput (output byte-identical): DST encode 45 → 297 M records/s and decode 315 → 556 (compile-time movement / record tables derived from the single ternary bit table, one extents pass, one buffer); PEC / PES encode 54 → 165 (all thumbnails rendered in one walk of the design); HUS / VIP decode 64 → 90 (10-bit prefix-table GL symbol decode) and encode 84 → 102 (literal streams coded without a token list); EXP decode 743 → 1 690 (exact allocation). `examples/throughput.rs` measures every format on a synthetic design and on a directory of real files.
 - `#[non_exhaustive]`: the model records `Design`, `Thread` and `Counts`; the encode options `DstEncodeOptions`, `HusEncodeOptions`, `JefEncodeOptions` and `PecEncodeOptions`; the parsed file records `DstHeader`, `DstFile`, `HusFile`, `HusDecoded`, `JefFile`, `PecBlock`, `PesFile`, `PhcFile`, `PhbFile`, `PhxFile`, `Vp3File` and `XxxFile`. Code outside the crate builds the model and option records with `Default` plus the `with_*` setters. `Extents` (a bounding box) and the palette entries `ThreadColor` / `PhxColor` are unchanged.
 - `#[doc(hidden)]`: the `gl` stream-compressor module (still `pub` for tests and fuzz).
@@ -23,6 +25,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `exp::ExpEncodeOptions` (`new`, `with_trim_records`) and `exp::encode_with`.
+- `tests/exp_trim.rs` over the four trim fixtures: constant trim payload, strict-clean decode, identical needle penetrations across EXP A / EXP B / both PEC renderings, trim sites equal to the PEC trim sites, byte-exact decode → encode of both EXP files, PEC → EXP conversion keeping every trim.
 - Decode diagnostics: `Design::diagnostics` (`Diagnostics`, `DecodeWarning`, `WarningAction::{Skipped, DecodedByRule}`; at most 64 warnings kept in detail, all counted), `DecodeOptions` (`new` / `strict` / `with_strict` / `check`), `decode_with`, `exp::decode_with`, and `Error::UnknownControl { format, code, offset }` for strict decodes.
 - Framework demuxer: a `decode_warnings` container-metadata entry (the warning count) whenever a decode met such records.
 - Tests: the EXP control-record tally of the corpus against its HUS siblings (zero needle drift with the HUS-only trims dropped), strict-clean decode of every corpus and fixture file, a property test that unevidenced EXP controls never move the needle; fuzz target `exp_decode`, and the strict / lenient agreement property in `decode_any`.
