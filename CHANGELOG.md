@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.5](https://github.com/OxideAV/oxideav-embroidery/compare/v0.0.4...v0.0.5) - 2026-11-16
+
+### Other
+
+- decode and write the trim record 80 80 07 00
+- Framework demuxer: report decode warnings as container metadata
+- Throughput example, README before/after table, CHANGELOG
+- prefix-table symbol decode; literal streams coded from their bytes
+- render every thumbnail in one walk of the design
+- compile-time movement and record tables, single-buffer encode
+- Decode diagnostics: control codes without file evidence are never silent movement
+- README + CHANGELOG: 2026-09 fixture round (80/80), XXX palette, PEC layout bytes, HUS magic
+- fixture sweep over docs/embroidery/fixtures-2026-09 (80 files)
+- positional 21-slot palette block, trailer, byte-exact re-serialisation
+- surface section-1 +31..+33 and +40..+45 raw; layout-chosen +31 on write
+- second documented magic, end-record-less streams, VIP name from the record tail; GL decode stats
+- Drop the empty impl blocks left by the non_exhaustive pass
+- API hygiene: non_exhaustive model, option and file records; hide gl
+
 ### Fixed
 
 - EXP: the trim record `80 80 07 00` is decoded as `Command::Trim { dx: 0, dy: 0 }` — a thread cut with no needle movement — and is strict-clean. Pinned by a purpose-made design contributed by the reporter of the record (`tests/fixtures/exp_trim/`: EXP and PEC renderings from two unrelated producers; 21 trim records, each at the needle position where the PEC rendering trims, payload always `07 00` and demonstrably not a displacement). `80 80` with any other payload stays unevidenced: skipped without movement and reported.
